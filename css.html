@@ -1,0 +1,47 @@
+<style>
+    html,
+    body {
+        height: 100%;
+        margin: 0;
+        overflow-x: hidden;
+        /* Prevent horizontal scroll */
+    }
+
+    #wrapper {
+        min-height: 100vh;
+        display: flex;
+        width: 100%;
+    }
+
+    #sidebar-wrapper {
+        min-height: 100vh;
+        /* transition: margin .25s ease-out; */
+    }
+
+    #page-content-wrapper {
+        flex: 1;
+        /* Take remaining width */
+        width: 100%;
+    }
+
+    /* Floating Autocomplete Dropdown */
+    #results-list {
+        z-index: 1050;
+        /* Higher than other elements */
+        max-height: 200px;
+        overflow-y: auto;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        top: 100%;
+        /* Directly below input */
+    }
+
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    /* Loading state for full page if needed */
+    body.loading {
+        opacity: 0.5;
+        pointer-events: none;
+    }
+</style>

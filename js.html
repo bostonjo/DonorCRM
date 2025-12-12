@@ -1,0 +1,220 @@
+<script>
+    let STATE = { donors: [], projects: [] };
+
+    window.onload = function () {
+        document.getElementById('date').valueAsDate = new Date();
+        google.script.run
+            .withSuccessHandler(initApp)
+            .withFailureHandler(showError)
+            .getInitialData();
+    };
+
+    function initApp(data) {
+        STATE.donors = data.donors;
+        STATE.projects = data.projects;
+
+        // Populate Projects Dropdown
+        const projectSelect = document.getElementById('project');
+        STATE.projects.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.project_id;
+            option.textContent = p.name;
+            projectSelect.appendChild(option);
+        });
+
+        initAutocomplete();
+        renderDonorsTable();
+    }
+
+    // --- NAVIGATION ---
+    function navigate(viewId, linkElement) {
+        // Hide all views
+        document.querySelectorAll('.view-section').forEach(el => el.classList.add('d-none'));
+        // Show target
+        document.getElementById(viewId).classList.remove('d-none');
+
+        // Update Sidebar Active State
+        if (linkElement) {
+            document.querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active'));
+            linkElement.classList.add('active');
+        }
+    }
+
+    // --- DONOR MANAGEMENT ---
+    function renderDonorsTable() {
+        const tbody = document.getElementById('donors-table-body');
+        tbody.innerHTML = '';
+
+        // Sort by name (search_index)
+        const sorted = [...STATE.donors].sort((a, b) => (a.search_index || '').localeCompare(b.search_index || ''));
+
+        sorted.forEach(d => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+        <td>${d.search_index || 'Unknown'}</td>
+        <td>${d.email || ''}</td>
+        <td>${d.phone || ''}</td>
+        <td><span class="badge bg-info text-dark">${d.type || 'Individual'}</span></td>
+        <td><span class="badge bg-success">Active</span></td>
+      `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function submitDonor() {
+        const btn = document.getElementById('btn-save-donor');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+
+        const payload = {
+            firstName: document.getElementById('d-first').value,
+            lastName: document.getElementById('d-last').value,
+            email: document.getElementById('d-email').value,
+            phone: document.getElementById('d-phone').value,
+            type: document.getElementById('d-type').value
+        };
+
+        if (!payload.firstName || !payload.lastName) {
+            alert("First and Last Name are required.");
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+
+        google.script.run
+            .withSuccessHandler((res) => {
+                // Update Local State
+                STATE.donors.push({
+                    donor_id: res.donor_id,
+                    search_index: res.search_index,
+                    ...payload
+                });
+
+                // Refresh UI
+                renderDonorsTable();
+
+                // Close Modal
+                const modalEl = document.getElementById('addDonorModal');
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                modal.hide();
+
+                // Reset Form
+                document.getElementById('add-donor-form').reset();
+                btn.disabled = false;
+                btn.textContent = originalText;
+                showAlert('success', 'Donor added successfully!');
+            })
+            .withFailureHandler((err) => {
+                btn.disabled = false;
+                btn.textContent = originalText;
+                alert('Error: ' + err.message);
+            })
+            .saveDonor(payload);
+    }
+
+
+    // --- DONATION FORM (Existing Logic) ---
+    function initAutocomplete() {
+        const input = document.getElementById('donor-search');
+        const resultsList = document.getElementById('results-list');
+        const hiddenId = document.getElementById('selected-donor-id');
+        const display = document.getElementById('selected-donor-display');
+
+        input.addEventListener('keyup', (e) => {
+            const query = e.target.value.toLowerCase();
+            resultsList.innerHTML = '';
+            resultsList.classList.add('d-none');
+
+            if (query.length < 2) return;
+
+            const matches = STATE.donors.filter(d =>
+                (d.search_index || '').toLowerCase().includes(query)
+            ).slice(0, 5);
+
+            if (matches.length > 0) {
+                matches.forEach(match => {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item list-group-item-action cursor-pointer';
+                    li.textContent = match.search_index;
+
+                    li.onclick = () => {
+                        input.value = match.search_index;
+                        hiddenId.value = match.donor_id;
+                        resultsList.classList.add('d-none');
+                        input.classList.add('is-valid');
+                    };
+
+                    resultsList.appendChild(li);
+                });
+                resultsList.classList.remove('d-none');
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (e.target !== input && e.target !== resultsList) {
+                resultsList.classList.add('d-none');
+            }
+        });
+    }
+
+    function submitForm() {
+        const btn = document.getElementById('submit-btn');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+
+        const donorId = document.getElementById('selected-donor-id').value;
+        const project = document.getElementById('project').value;
+        const amount = parseFloat(document.getElementById('amount').value);
+        const date = document.getElementById('date').value;
+        const method = document.getElementById('method').value;
+
+        if (!donorId) {
+            alert('Please select a donor from the search list.');
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+
+        const payload = {
+            donor_id: donorId,
+            project_id: project,
+            amount_cents: Math.round(amount * 100),
+            date: date,
+            method: method
+        };
+
+        google.script.run
+            .withSuccessHandler((res) => {
+                btn.disabled = false;
+                btn.textContent = originalText;
+                showAlert('success', 'Donation saved successfully! ID: ' + res.txn_id);
+                document.getElementById('donation-form').reset();
+                document.getElementById('selected-donor-id').value = '';
+                document.getElementById('donor-search').classList.remove('is-valid');
+                document.getElementById('date').valueAsDate = new Date();
+            })
+            .withFailureHandler((err) => {
+                btn.disabled = false;
+                btn.textContent = originalText;
+                showAlert('danger', 'Error: ' + err.message);
+            })
+            .saveDonation(payload);
+    }
+
+    function showAlert(type, message) {
+        const container = document.getElementById('alert-container');
+        container.innerHTML = `
+      <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    `;
+    }
+
+    function showError(err) {
+        console.error(err);
+        showAlert('danger', 'System Error: ' + err.message);
+    }
+</script>
