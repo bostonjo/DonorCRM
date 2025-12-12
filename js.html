@@ -80,7 +80,7 @@
             const emails = h.members.map(m => m.email).filter(e => e).join(', ');
             const phones = h.members.map(m => m.phone).filter(p => p).join(', ');
             const address = h.address ?
-                `${h.address.street || ''}, ${h.address.city || ''}, ${h.address.state || ''} ${h.address.zip || ''}`.replace(/^[,\s]+|[,\s]+$/g, '')
+                `${h.address.street || ''}${h.address.street2 ? ', ' + h.address.street2 : ''}, ${h.address.city || ''}, ${h.address.state || ''} ${h.address.zip || ''}`.replace(/^[,\s]+|[,\s]+$/g, '')
                 : '';
 
             const tr = document.createElement('tr');
@@ -100,6 +100,23 @@
     // Dynamic member input management
     let memberCount = 1;
 
+    // --- PHONE FORMATTING ---
+    function formatPhoneNumber(value) {
+        if (!value) return value;
+        const current = value.replace(/[^\d]/g, '');
+        const mobileReg = /(^[0-9]{3})([0-9]{3})([0-9]{4}$)/;
+        if (current.length >= 10) {
+            return current.replace(mobileReg, '($1) $2-$3').slice(0, 14); // Limit length
+        }
+        return value;
+    }
+
+    function setupPhoneFormatter(input) {
+        input.addEventListener('input', function (e) {
+            const x = e.target.value.replace(/\D/g, '').match(/(\d{0,3})(\d{0,3})(\d{0,4})/);
+            e.target.value = !x[2] ? x[1] : '(' + x[1] + ') ' + x[2] + (x[3] ? '-' + x[3] : '');
+        });
+    }
 
     // --- AUTO-GENERATION LOGIC ---
     let isHouseholdNameManuallyEdited = false;
@@ -114,8 +131,10 @@
             }
         });
 
+
         // Attach to initial Member 1
         attachNameListeners(1);
+        setupPhoneFormatter(document.getElementById('m1-phone'));
 
         // Reset form when modal opens
         const modal = document.getElementById('addHouseholdModal');
@@ -194,6 +213,7 @@
 
         // Attach listeners to new inputs
         attachNameListeners(memberCount);
+        setupPhoneFormatter(document.getElementById(`m${memberCount}-phone`));
     }
 
     function removeMemberInput(id) {
@@ -232,6 +252,7 @@
         memberCount = 1;
         isHouseholdNameManuallyEdited = false; // Reset auto-naming flag
         attachNameListeners(1); // Re-attach listeners to new inputs
+        setupPhoneFormatter(document.getElementById('m1-phone')); // Re-attach phone formatter
     }
 
     function submitHousehold() {
@@ -244,6 +265,7 @@
         const household_name = document.getElementById('h-name').value;
         const address = {
             street: document.getElementById('h-street').value,
+            street2: document.getElementById('h-street2').value,
             city: document.getElementById('h-city').value,
             state: document.getElementById('h-state').value,
             zip: document.getElementById('h-zip').value
