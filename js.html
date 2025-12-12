@@ -1,5 +1,6 @@
 <script>
-    let STATE = { households: [], projects: [] };
+    let STATE = { households: [], projects: [], donations: [] };
+    let CHARTS = {}; // Store chart instances
 
     window.onload = function () {
         document.getElementById('date').valueAsDate = new Date();
@@ -11,7 +12,28 @@
 
     function initApp(data) {
         STATE.households = data.households;
+
         STATE.projects = data.projects;
+        STATE.donations = data.donations;
+
+        // Initialize Filter Years
+        const yearSelect = document.getElementById('filter-year');
+        const years = [...new Set(data.donations.map(d => new Date(d.date).getFullYear()))].sort().reverse();
+        years.forEach(y => {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.innerText = y;
+            yearSelect.appendChild(opt);
+        });
+
+        // Populate Filter Projects
+        const filterProject = document.getElementById('filter-project');
+        STATE.projects.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.project_id;
+            option.textContent = p.name;
+            filterProject.appendChild(option);
+        });
 
         // Populate Projects Dropdown
         // Populate Projects Dropdown
@@ -28,7 +50,9 @@
         initAutocomplete();
         initAutocomplete();
         renderHouseholdsDirectory();
-        renderProjectsDirectory(); // Render Projects
+        renderHouseholdsDirectory();
+        renderProjectsDirectory();
+        renderDashboard(); // Initial Dash Load
         // Initialize auto-naming
         setupHouseholdAutoNaming();
     }
@@ -549,7 +573,6 @@
             })
             .deleteProject(id);
     }
-
     function refreshProjectDropdown() {
         const projectSelect = document.getElementById('project');
         projectSelect.innerHTML = '<option value="">No Project</option>';
@@ -559,6 +582,144 @@
             option.textContent = p.name;
             projectSelect.appendChild(option);
         });
+    }
+
+    // --- ANALYTICS DASHBOARD ---
+
+    function resetDashboardFilters() {
+        document.getElementById('filter-year').value = 'All';
+        document.getElementById('filter-project').value = 'All';
+        document.getElementById('filter-method').value = 'All';
+        document.getElementById('filter-amount').value = 0;
+        document.getElementById('slider-val-display').textContent = '$0';
+        renderDashboard();
+    }
+
+    function renderDashboard() {
+        // 1. Get Filter Values
+        const fYear = document.getElementById('filter-year').value;
+        const fProject = document.getElementById('filter-project').value;
+        const fMethod = document.getElementById('filter-method').value;
+        const fAmount = parseInt(document.getElementById('filter-amount').value);
+
+        // 2. Filter Data
+        const filtered = STATE.donations.filter(d => {
+            const dYear = new Date(d.date).getFullYear().toString();
+            if (fYear !== 'All' && dYear !== fYear) return false;
+            if (fProject !== 'All' && d.project_id !== fProject) return false;
+            if (fMethod !== 'All' && d.method !== fMethod) return false;
+            if (d.amount_cents / 100 < fAmount) return false;
+            return true;
+        });
+
+        // 3. Compute KPIs
+        const totalCents = filtered.reduce((sum, d) => sum + d.amount_cents, 0);
+        const totalRaised = totalCents / 100;
+        const count = filtered.length;
+        const avg = count ? (totalRaised / count) : 0;
+        const uniqueDonors = new Set(filtered.map(d => d.household_id)).size;
+
+        // 4. Update KPI Counters with Animation
+        animateValue("kpi-total", totalRaised, "$");
+        animateValue("kpi-count", count, "");
+        animateValue("kpi-avg", avg, "$");
+        animateValue("kpi-donors", uniqueDonors, "");
+
+        // 5. Render Charts
+        renderCharts(filtered);
+    }
+
+    function animateValue(id, value, prefix = "") {
+        const obj = document.getElementById(id);
+        const start = 0;
+        const end = value;
+        const duration = 800;
+        let startTimestamp = null;
+
+        const step = (timestamp) => {
+            if (!startTimestamp) startTimestamp = timestamp;
+            const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+
+            // Format number
+            const current = progress * (end - start) + start;
+            let formatted;
+            if (prefix === "$") {
+                formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(current);
+            } else {
+                formatted = Math.floor(current);
+            }
+
+            obj.innerHTML = formatted;
+            if (progress < 1) {
+                window.requestAnimationFrame(step);
+            }
+        };
+        window.requestAnimationFrame(step);
+    }
+
+    function renderCharts(data) {
+        // Chart 1: Timeline (Line)
+        // Group by Month (YYYY-MM)
+        const timelineData = {};
+        data.forEach(d => {
+            const key = d.date.substring(0, 7); // YYYY-MM
+            timelineData[key] = (timelineData[key] || 0) + (d.amount_cents / 100);
+        });
+        const timelineLabels = Object.keys(timelineData).sort();
+        const timelineValues = timelineLabels.map(k => timelineData[k]);
+
+        createChart('chart-timeline', 'line', timelineLabels, timelineValues, 'Total Raised ($)', '#0d6efd');
+
+        // Chart 2: By Project (Doughnut)
+        const projectData = {};
+        data.forEach(d => {
+            const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'No Project';
+            projectData[pName] = (projectData[pName] || 0) + (d.amount_cents / 100);
+        });
+        createChart('chart-project', 'doughnut', Object.keys(projectData), Object.values(projectData), 'Raised by Project');
+
+        // Chart 3: By Method (Bar)
+        const methodData = {};
+        data.forEach(d => {
+            methodData[d.method] = (methodData[d.method] || 0) + (d.amount_cents / 100);
+        });
+        createChart('chart-method', 'bar', Object.keys(methodData), Object.values(methodData), 'Raised by Method', '#198754');
+    }
+
+    function createChart(canvasId, type, labels, data, label, color) {
+        // Destroy existing
+        if (CHARTS[canvasId]) {
+            CHARTS[canvasId].destroy();
+        }
+
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        const config = {
+            type: type,
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: label,
+                    data: data,
+                    backgroundColor: [
+                        '#0d6efd', '#6610f2', '#6f42c1', '#d63384', '#dc3545',
+                        '#fd7e14', '#ffc107', '#198754', '#20c997', '#0dcaf0'
+                    ],
+                    borderColor: type === 'line' ? color : '#fff',
+                    borderWidth: 1,
+                    tension: 0.3,
+                    fill: type === 'line'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: type !== 'doughnut' ? {
+                    y: { beginAtZero: true }
+                } : {}
+            }
+        };
+
+        CHARTS[canvasId] = new Chart(ctx, config);
     }
 
     function submitHousehold() {

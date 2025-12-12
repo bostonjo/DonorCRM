@@ -128,6 +128,7 @@ function getInitialData() {
   const householdRows = getData(householdsSheet);
   const memberRows = getData(membersSheet);
   const projectRows = getData(projectsSheet);
+  const donationRows = getData(ss.getSheetByName('db_Donations'));
 
   // Process Households
   const households = householdRows.map(row => {
@@ -180,7 +181,17 @@ function getInitialData() {
     description: row[2]
   }));
 
-  return { households, projects };
+  // Process Donations
+  const donations = (donationRows || []).map(row => ({
+    txn_id: row[0],
+    household_id: row[1],
+    project_id: row[2],
+    date: row[3],
+    amount_cents: row[4],
+    method: row[5]
+  }));
+
+  return { households, projects, donations };
 }
 
 /**
