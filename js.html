@@ -24,7 +24,9 @@
 
         initAutocomplete();
         initAutocomplete();
+        initAutocomplete();
         renderHouseholdsDirectory();
+        renderProjectsDirectory(); // Render Projects
         // Initialize auto-naming
         setupHouseholdAutoNaming();
     }
@@ -404,6 +406,153 @@
                 alert('Error deleting household: ' + err.message);
             })
             .deleteHousehold(id);
+    }
+
+    // --- PROJECT MANAGEMENT ---
+
+    function renderProjectsDirectory() {
+        const grid = document.getElementById('projects-grid');
+        grid.innerHTML = '';
+
+        // Sort by name
+        const sorted = [...STATE.projects].sort((a, b) =>
+            (a.name || '').localeCompare(b.name || '')
+        );
+
+        sorted.forEach(p => {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4';
+
+            col.innerHTML = `
+                <div class="card h-100 shadow-sm border-0 border-start border-4 border-primary">
+                    <div class="card-body">
+                         <div class="d-flex justify-content-between align-items-start mb-2">
+                             <h5 class="card-title fw-bold text-primary mb-0">${p.name}</h5>
+                             <div class="dropdown">
+                                <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown">
+                                    <i class="bi bi-three-dots-vertical"></i>
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li><a class="dropdown-item" href="javascript:void(0)" onclick="editProject('${p.project_id}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+                                    <li><a class="dropdown-item text-danger" href="javascript:void(0)" onclick="deleteProject('${p.project_id}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                                </ul>
+                            </div>
+                         </div>
+                         <p class="card-text text-muted">${p.description || '<span class="fst-italic">No description</span>'}</p>
+                    </div>
+                </div>
+             `;
+            grid.appendChild(col);
+        });
+    }
+
+    function openAddProjectModal() {
+        document.getElementById('add-project-form').reset();
+        document.getElementById('project-id').value = '';
+        document.querySelector('#addProjectModal .modal-title').textContent = 'Add New Project';
+        const modal = new bootstrap.Modal(document.getElementById('addProjectModal'));
+        modal.show();
+    }
+
+    function editProject(id) {
+        const project = STATE.projects.find(p => p.project_id === id);
+        if (!project) return;
+
+        document.getElementById('project-id').value = project.project_id;
+        document.getElementById('p-name').value = project.name;
+        document.getElementById('p-desc').value = project.description || '';
+        document.querySelector('#addProjectModal .modal-title').textContent = 'Edit Project';
+
+        const modal = new bootstrap.Modal(document.getElementById('addProjectModal'));
+        modal.show();
+    }
+
+    function submitProject() {
+        const btn = document.getElementById('btn-save-project');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+
+        const project_id = document.getElementById('project-id').value;
+        const name = document.getElementById('p-name').value;
+        const description = document.getElementById('p-desc').value;
+
+        if (!name) {
+            alert("Project Name is required.");
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+
+        const payload = { project_id, name, description };
+
+        const handler = (res) => {
+            // Handle Success
+            if (project_id) {
+                // Update Existing
+                const idx = STATE.projects.findIndex(p => p.project_id === project_id);
+                if (idx !== -1) STATE.projects[idx] = { project_id, name, description };
+            } else {
+                // Add New
+                STATE.projects.push({ project_id: res.project_id, name: res.name, description });
+            }
+
+            // Refresh UI and Dropdown
+            renderProjectsDirectory();
+            refreshProjectDropdown(); // We need to create this helper or inline it
+
+            // Close Modal
+            const modalEl = document.getElementById('addProjectModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            modal.hide();
+
+            document.getElementById('add-project-form').reset();
+
+            btn.disabled = false;
+            btn.textContent = originalText;
+            showAlert('success', project_id ? 'Project updated successfully!' : 'Project added successfully!');
+        };
+
+        if (project_id) {
+            google.script.run.withSuccessHandler(handler).withFailureHandler(err => {
+                alert('Error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }).updateProject(payload);
+        } else {
+            google.script.run.withSuccessHandler(handler).withFailureHandler(err => {
+                alert('Error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }).saveProject(payload);
+        }
+    }
+
+    function deleteProject(id) {
+        if (!confirm('Are you sure you want to delete this project?')) return;
+
+        google.script.run
+            .withSuccessHandler(() => {
+                STATE.projects = STATE.projects.filter(p => p.project_id !== id);
+                renderProjectsDirectory();
+                refreshProjectDropdown();
+                showAlert('success', 'Project deleted successfully.');
+            })
+            .withFailureHandler(err => {
+                alert('Error: ' + err.message);
+            })
+            .deleteProject(id);
+    }
+
+    function refreshProjectDropdown() {
+        const projectSelect = document.getElementById('project');
+        projectSelect.innerHTML = '<option value="" disabled selected>Select...</option>';
+        STATE.projects.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.project_id;
+            option.textContent = p.name;
+            projectSelect.appendChild(option);
+        });
     }
 
     function submitHousehold() {

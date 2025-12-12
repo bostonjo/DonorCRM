@@ -501,4 +501,134 @@ function saveDonation(payload) {
   } finally {
     lock.releaseLock();
   }
+    return { success: true, txn_id: txn_id };
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// --- PROJECT MANAGEMENT ---
+
+/**
+ * saveProject - Creates a new project
+ */
+function saveProject(payload) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(5000);
+  } catch (e) {
+    throw new Error('Could not obtain lock.');
+  }
+
+  try {
+    const sheet = ss.getSheetByName('db_Projects');
+    const project_id = Utilities.getUuid();
+    
+    // Check if name is provided
+    if (!payload.name) throw new Error("Project name is required.");
+
+    sheet.appendRow([
+      project_id,
+      payload.name,
+      payload.description || ''
+    ]);
+
+    return { success: true, project_id: project_id, name: payload.name };
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * updateProject - Updates an existing project
+ */
+function updateProject(payload) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(5000);
+  } catch (e) {
+    throw new Error('Could not obtain lock.');
+  }
+
+  try {
+    const sheet = ss.getSheetByName('db_Projects');
+    const data = sheet.getDataRange().getValues();
+    
+    // Find row by project_id
+    for (let i = 1; i < data.length; i++) {
+       if (data[i][0] === payload.project_id) {
+         // Update cols 2, 3 (Name, Description)
+         sheet.getRange(i + 1, 2).setValue(payload.name);
+         sheet.getRange(i + 1, 3).setValue(payload.description || '');
+         return { success: true };
+       }
+    }
+    
+    throw new Error("Project not found.");
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * deleteProject - Deletes a project IF no donations exist.
+ */
+function deleteProject(project_id) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(5000);
+  } catch (e) {
+    throw new Error('Could not obtain lock.');
+  }
+
+  try {
+    const projectsSheet = ss.getSheetByName('db_Projects');
+    const donationsSheet = ss.getSheetByName('db_Donations');
+    
+    // 1. Check for donations
+    if (donationsSheet) {
+      const data = donationsSheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][2] === project_id) { // Col 3 is project_id
+           throw new Error("Cannot delete project with existing donations.");
+        }
+      }
+    }
+
+    // 2. Delete Project
+    if (projectsSheet) {
+      const data = projectsSheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][0] === project_id) {
+           projectsSheet.deleteRow(i + 1);
+           return { success: true };
+        }
+      }
+    }
+    
+    throw new Error("Project not found.");
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
 }

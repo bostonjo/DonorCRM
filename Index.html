@@ -18,13 +18,17 @@
     <div class="bg-dark text-white p-3" id="sidebar-wrapper" style="min-width: 250px; min-height: 100vh;">
       <h3 class="mb-4">DonorCRM</h3>
       <div class="list-group list-group-flush">
-        <a href="#" class="list-group-item list-group-item-action bg-dark text-white active"
-          onclick="event.preventDefault(); navigate('view-donations', this)">
-          <i class="bi bi-cash-coin me-2"></i> Donations
+        <a href="#" class="list-group-item list-group-item-action bg-transparent p-3 active"
+          onclick="navigate('view-log-donation', this)">
+          <i class="bi bi-wallet2 me-2"></i> Log Donation
         </a>
-        <a href="#" class="list-group-item list-group-item-action bg-dark text-white"
-          onclick="event.preventDefault(); navigate('view-households', this)">
+        <a href="#" class="list-group-item list-group-item-action bg-transparent p-3"
+          onclick="navigate('view-households', this)">
           <i class="bi bi-people me-2"></i> Households
+        </a>
+        <a href="#" class="list-group-item list-group-item-action bg-transparent p-3"
+          onclick="navigate('view-projects', this)">
+          <i class="bi bi-folder me-2"></i> Projects
         </a>
       </div>
     </div>
@@ -95,6 +99,20 @@
         </div>
 
         <div id="households-grid" class="row g-3">
+          <!-- JS Rendered Cards -->
+        </div>
+      </div>
+
+      <!-- VIEW: PROJECTS -->
+      <div id="view-projects" class="view-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2>Project Management</h2>
+          <button class="btn btn-primary" onclick="openAddProjectModal()">
+            <i class="bi bi-plus-circle"></i> Add Project
+          </button>
+        </div>
+
+        <div id="projects-grid" class="row g-3">
           <!-- JS Rendered Cards -->
         </div>
       </div>
@@ -185,6 +203,33 @@
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
           <button type="button" class="btn btn-primary" onclick="submitHousehold()" id="btn-save-household">Save
             Household</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Project Modal -->
+  <div class="modal fade" id="addProjectModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Add New Project</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="add-project-form">
+            <input type="hidden" id="project-id">
+            <div class="mb-3">
+              <label class="form-label">Project Name</label>
+              <input type="text" class="form-control" id="p-name" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Description (Optional)</label>
+              <textarea class="form-control" id="p-desc" rows="3"></textarea>
+            </div>
+            <button type="button" class="btn btn-primary w-100" id="btn-save-project" onclick="submitProject()">Save
+              Project</button>
+          </form>
         </div>
       </div>
     </div>
