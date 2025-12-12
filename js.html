@@ -85,12 +85,24 @@
             }
         });
 
-        // Restore selection
-        if (yearSelect) yearSelect.value = currentYear;
-        // if restored value is not in list (e.g. year deleted?), it falls back to first option (All) automatically? 
-        // HTML select behavior: if value not found, it might pick the first one.
-        // We verify:
-        if (yearSelect && yearSelect.value !== currentYear) yearSelect.value = 'All';
+        // Restore selection or Default to Current Year
+        const currentSystemYear = new Date().getFullYear().toString();
+
+        if (yearSelect) {
+            if (currentYear !== 'All') {
+                yearSelect.value = currentYear;
+            } else {
+                // Try to select current system year if it exists in options
+                // If not exists, it stays 'All' (value="All" is first option)
+                const options = Array.from(yearSelect.options).map(o => o.value);
+                if (options.includes(currentSystemYear)) {
+                    yearSelect.value = currentSystemYear;
+                }
+            }
+
+            // Verification: if val is still somehow invalid fall back to All
+            if (!yearSelect.value) yearSelect.value = 'All';
+        }
 
 
         if (dmYearSelect) dmYearSelect.value = currentDmYear;
