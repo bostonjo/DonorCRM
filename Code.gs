@@ -206,9 +206,9 @@ function getHouseholdDisplayName(members) {
     const firstNames = members.map(m => m.first_name).join(' and ');
     return `${firstNames} ${lastNames[0]}`;
   } else {
-    // "John Smith and Jane Doe"
+    // "John Smith & Jane Doe"
     const fullNames = members.map(m => `${m.first_name} ${m.last_name}`);
-    return fullNames.join(' and ');
+    return fullNames.join(' & ');
   }
 }
 
