@@ -738,3 +738,101 @@ function deleteProject(project_id) {
     lock.releaseLock();
   }
 }
+
+/**
+ * importDataInternal - Bulk import function.
+ * Expects { households: [], projects: [], donations: [] }
+ * Clears existing data (keeping headers) before import.
+ */
+function importDataInternal(payload) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000); 
+  } catch (e) {
+    throw new Error('Lock timeout');
+  }
+
+  try {
+    const householdsSheet = ss.getSheetByName('db_Households');
+    const membersSheet = ss.getSheetByName('db_HouseholdMembers');
+    const donationsSheet = ss.getSheetByName('db_Donations');
+    const projectsSheet = ss.getSheetByName('db_Projects');
+
+    // CLEAR DATA (Keep headers)
+    [householdsSheet, membersSheet, donationsSheet, projectsSheet].forEach(sheet => {
+        if (sheet && sheet.getLastRow() > 1) {
+            sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+        }
+    });
+
+    // 1. PROJECTS
+    if (payload.projects && payload.projects.length > 0) {
+        const rows = payload.projects.map(p => [p.project_id, p.name, p.description]);
+        if (rows.length > 0) {
+            projectsSheet.getRange(2, 1, rows.length, 3).setValues(rows);
+        }
+    }
+
+    // 2. HOUSEHOLDS
+    if (payload.households && payload.households.length > 0) {
+        // 'household_id', 'household_name', 'search_index', 'address_json', 'created_at'
+        const rows = payload.households.map(h => [
+            h.household_id,
+            h.household_name,
+            h.search_index,
+            JSON.stringify(h.address),
+            new Date().toISOString()
+        ]);
+        householdsSheet.getRange(2, 1, rows.length, 5).setValues(rows);
+        
+        // 3. MEMBERS
+        const memberRows = [];
+        payload.households.forEach(h => {
+            h.members.forEach(m => {
+                // 'member_id', 'household_id', 'first_name', 'last_name', 'email', 'phone', 'member_order', 'created_at'
+                memberRows.push([
+                    m.member_id,
+                    h.household_id,
+                    m.first_name,
+                    m.last_name,
+                    m.email,
+                    m.phone,
+                    m.member_order,
+                    new Date().toISOString()
+                ]);
+            });
+        });
+        if (memberRows.length > 0) {
+            membersSheet.getRange(2, 1, memberRows.length, 8).setValues(memberRows);
+        }
+    }
+
+    // 4. DONATIONS
+    if (payload.donations && payload.donations.length > 0) {
+        // 'txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'meta_json'
+        const rows = payload.donations.map(d => [
+            d.txn_id,
+            d.household_id,
+            d.project_id,
+            d.date,
+            d.amount_cents,
+            d.method,
+            "{}" // meta_json
+        ]);
+        donationsSheet.getRange(2, 1, rows.length, 7).setValues(rows);
+    }
+
+    console.log("Import Complete: " + payload.donations.length + " donations imported.");
+    return "Success";
+
+  } catch (e) {
+    console.error(e);
+    throw e;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
