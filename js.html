@@ -301,8 +301,13 @@
         document.getElementById('h-name').value = household.household_name;
         document.querySelector('#addHouseholdModal .modal-title').textContent = 'Edit Household';
 
-        // Manual edit flag true so we don't overwrite name while editing members
-        isHouseholdNameManuallyEdited = true;
+        // Check if existing name matches the auto-generated pattern
+        const autoName = formatHouseholdName(household.members);
+        if (household.household_name === autoName) {
+            isHouseholdNameManuallyEdited = false;
+        } else {
+            isHouseholdNameManuallyEdited = true;
+        }
 
         // 2. Set Address
         if (household.address) {
