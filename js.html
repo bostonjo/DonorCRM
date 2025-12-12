@@ -23,7 +23,8 @@
         });
 
         initAutocomplete();
-        renderHouseholdsTable();
+        initAutocomplete();
+        renderHouseholdsDirectory();
         // Initialize auto-naming
         setupHouseholdAutoNaming();
     }
@@ -66,9 +67,10 @@
     }
 
     // --- HOUSEHOLD MANAGEMENT ---
-    function renderHouseholdsTable() {
-        const tbody = document.getElementById('households-table-body');
-        tbody.innerHTML = '';
+    // --- HOUSEHOLD MANAGEMENT ---
+    function renderHouseholdsDirectory() {
+        const grid = document.getElementById('households-grid');
+        grid.innerHTML = '';
 
         // Sort by household name
         const sorted = [...STATE.households].sort((a, b) =>
@@ -76,32 +78,53 @@
         );
 
         sorted.forEach(h => {
-            const displayName = formatHouseholdName(h.members);
-            const emails = h.members.map(m => m.email).filter(e => e).join(', ');
-            const phones = h.members.map(m => m.phone).filter(p => p).join(', ');
             const address = h.address ?
                 `${h.address.street || ''}${h.address.street2 ? ', ' + h.address.street2 : ''}, ${h.address.city || ''}, ${h.address.state || ''} ${h.address.zip || ''}`.replace(/^[,\s]+|[,\s]+$/g, '')
-                : '';
+                : 'No Address';
 
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>
-                    <strong>${h.household_name}</strong><br>
-                    <small class="text-muted">${displayName}</small>
-                </td>
-                <td>${emails || '<span class="text-muted">—</span>'}</td>
-                <td>${phones || '<span class="text-muted">—</span>'}</td>
-                <td>${address || '<span class="text-muted">—</span>'}</td>
-                <td>
-                    <button class="btn btn-sm btn-outline-primary me-2" onclick="editHousehold('${h.household_id}')">
-                        <i class="bi bi-pencil"></i>
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteHousehold('${h.household_id}')">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </td>
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4';
+
+            // Generate Member List HTML
+            const membersHtml = h.members.map(m => {
+                const parts = [];
+                if (m.email) parts.push(`<a href="mailto:${m.email}" class="text-decoration-none text-muted"><i class="bi bi-envelope"></i> ${m.email}</a>`);
+                if (m.phone) parts.push(`<span class="text-muted"><i class="bi bi-telephone"></i> ${m.phone}</span>`);
+                const contactInfo = parts.join(' &bull; ');
+
+                return `
+                    <div class="mb-2 pb-2 border-bottom last-child-no-border">
+                        <strong>${m.first_name} ${m.last_name}</strong>
+                        ${contactInfo ? `<div class="small">${contactInfo}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            col.innerHTML = `
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 text-truncate" title="${h.household_name}">${h.household_name}</h5>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-link text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="#" onclick="editHousehold('${h.household_id}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+                                <li><a class="dropdown-item text-danger" href="#" onclick="deleteHousehold('${h.household_id}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            ${membersHtml}
+                        </div>
+                        <div class="text-muted small">
+                            <i class="bi bi-geo-alt me-1"></i> ${address}
+                        </div>
+                    </div>
+                </div>
             `;
-            tbody.appendChild(tr);
+            grid.appendChild(col);
         });
     }
 
@@ -373,7 +396,7 @@
         google.script.run
             .withSuccessHandler(() => {
                 STATE.households = STATE.households.filter(h => h.household_id !== id);
-                renderHouseholdsTable();
+                renderHouseholdsDirectory();
                 initAutocomplete(); // Refresh search index
                 showAlert('success', 'Household deleted successfully.');
             })
@@ -477,7 +500,7 @@
             }
 
             // Refresh UI
-            renderHouseholdsTable();
+            renderHouseholdsDirectory();
             initAutocomplete(); // Update search index
 
             // Close Modal
