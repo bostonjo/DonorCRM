@@ -24,6 +24,8 @@
 
         initAutocomplete();
         renderHouseholdsTable();
+        // Initialize auto-naming
+        setupHouseholdAutoNaming();
     }
 
     // --- NAVIGATION ---
@@ -98,6 +100,66 @@
     // Dynamic member input management
     let memberCount = 1;
 
+
+    // --- AUTO-GENERATION LOGIC ---
+    let isHouseholdNameManuallyEdited = false;
+
+    function setupHouseholdAutoNaming() {
+        const nameInput = document.getElementById('h-name');
+
+        // Track manual edits
+        nameInput.addEventListener('input', () => {
+            if (nameInput.value.trim() !== '') {
+                isHouseholdNameManuallyEdited = true;
+            }
+        });
+
+        // Attach to initial Member 1
+        attachNameListeners(1);
+
+        // Reset form when modal opens
+        const modal = document.getElementById('addHouseholdModal');
+        if (modal) {
+            modal.addEventListener('show.bs.modal', resetAddHouseholdModal);
+        }
+    }
+
+    function attachNameListeners(id) {
+        const first = document.getElementById(`m${id}-first`);
+        const last = document.getElementById(`m${id}-last`);
+
+        if (first) first.addEventListener('input', updateHouseholdNameAuto);
+        if (last) last.addEventListener('input', updateHouseholdNameAuto);
+    }
+
+    function updateHouseholdNameAuto() {
+        if (isHouseholdNameManuallyEdited) return;
+
+        const members = [];
+        // Scan all potential members up to memberCount
+        for (let i = 1; i <= memberCount; i++) {
+            const firstInput = document.getElementById(`m${i}-first`);
+            const lastInput = document.getElementById(`m${i}-last`);
+
+            // Only include if input elements exist and have at least one name part
+            if (firstInput && lastInput) {
+                const first = firstInput.value.trim();
+                const last = lastInput.value.trim();
+
+                if (first || last) {
+                    members.push({ first_name: first, last_name: last });
+                }
+            }
+        }
+
+        const nameInput = document.getElementById('h-name');
+        if (members.length > 0) {
+            nameInput.value = formatHouseholdName(members);
+        } else {
+            nameInput.value = '';
+        }
+    }
+
     function addMemberInput() {
         memberCount++;
         const container = document.getElementById('members-container');
@@ -129,13 +191,47 @@
         `;
 
         container.appendChild(memberDiv);
+
+        // Attach listeners to new inputs
+        attachNameListeners(memberCount);
     }
 
     function removeMemberInput(id) {
         const element = document.getElementById(`member-${id}`);
         if (element) {
             element.remove();
+            // Re-calculate name after removal
+            updateHouseholdNameAuto();
         }
+    }
+
+    function resetAddHouseholdModal() {
+        // Reset Form
+        document.getElementById('add-household-form').reset();
+
+        // Reset members container to single member
+        document.getElementById('members-container').innerHTML = `
+            <div class="member-input-group p-3 mb-3 border rounded bg-light" id="member-1">
+                <h6 class="mb-2">Member 1</h6>
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="m1-first" placeholder="First Name" required>
+                    </div>
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="m1-last" placeholder="Last Name" required>
+                    </div>
+                    <div class="col-md-6">
+                        <input type="email" class="form-control" id="m1-email" placeholder="Email (optional)">
+                    </div>
+                    <div class="col-md-6">
+                        <input type="tel" class="form-control" id="m1-phone" placeholder="Phone (optional)">
+                    </div>
+                </div>
+            </div>
+        `;
+        memberCount = 1;
+        isHouseholdNameManuallyEdited = false; // Reset auto-naming flag
+        attachNameListeners(1); // Re-attach listeners to new inputs
     }
 
     function submitHousehold() {
@@ -208,30 +304,7 @@
                 const modal = bootstrap.Modal.getInstance(modalEl);
                 modal.hide();
 
-                // Reset Form
-                document.getElementById('add-household-form').reset();
-
-                // Reset members container to single member
-                document.getElementById('members-container').innerHTML = `
-                    <div class="member-input-group p-3 mb-3 border rounded bg-light" id="member-1">
-                        <h6 class="mb-2">Member 1</h6>
-                        <div class="row g-2">
-                            <div class="col-md-6">
-                                <input type="text" class="form-control" id="m1-first" placeholder="First Name" required>
-                            </div>
-                            <div class="col-md-6">
-                                <input type="text" class="form-control" id="m1-last" placeholder="Last Name" required>
-                            </div>
-                            <div class="col-md-6">
-                                <input type="email" class="form-control" id="m1-email" placeholder="Email (optional)">
-                            </div>
-                            <div class="col-md-6">
-                                <input type="tel" class="form-control" id="m1-phone" placeholder="Phone (optional)">
-                            </div>
-                        </div>
-                    </div>
-                `;
-                memberCount = 1;
+                resetAddHouseholdModal();
 
                 btn.disabled = false;
                 btn.textContent = originalText;
