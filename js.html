@@ -14,7 +14,9 @@
         STATE.projects = data.projects;
 
         // Populate Projects Dropdown
+        // Populate Projects Dropdown
         const projectSelect = document.getElementById('project');
+        projectSelect.innerHTML = '<option value="">No Project</option>';
         STATE.projects.forEach(p => {
             const option = document.createElement('option');
             option.value = p.project_id;
@@ -550,7 +552,7 @@
 
     function refreshProjectDropdown() {
         const projectSelect = document.getElementById('project');
-        projectSelect.innerHTML = '<option value="" disabled selected>Select...</option>';
+        projectSelect.innerHTML = '<option value="">No Project</option>';
         STATE.projects.forEach(p => {
             const option = document.createElement('option');
             option.value = p.project_id;
