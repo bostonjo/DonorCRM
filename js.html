@@ -184,6 +184,25 @@
         );
 
         sorted.forEach(h => {
+            // --- Statistics Calculations ---
+            const hDonations = STATE.donations.filter(d => d.household_id === h.household_id);
+            const totalCents = hDonations.reduce((sum, d) => sum + d.amount_cents, 0);
+            const totalRaised = totalCents / 100;
+            const count = hDonations.length;
+
+            // Last Gift Date
+            let lastGiftDate = 'Never';
+            if (count > 0) {
+                // dates are ISO strings, compatible with Date constructor
+                const dates = hDonations.map(d => new Date(d.date).getTime());
+                const maxDate = new Date(Math.max(...dates));
+                lastGiftDate = maxDate.toLocaleDateString();
+            }
+
+            // Format Currency
+            const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalRaised);
+
+
             const address = h.address ?
                 `${h.address.street || ''}${h.address.street2 ? ', ' + h.address.street2 : ''}, ${h.address.city || ''}, ${h.address.state || ''} ${h.address.zip || ''}`.replace(/^[,\s]+|[,\s]+$/g, '')
                 : 'No Address';
@@ -194,7 +213,8 @@
             // Generate Member List HTML
             const membersHtml = h.members.map(m => {
                 const parts = [];
-                if (m.email) parts.push(`<a href="mailto:${m.email}" class="text-decoration-none text-muted"><i class="bi bi-envelope"></i> ${m.email}</a>`);
+                // Add stopPropagation to mail link to prevent card click
+                if (m.email) parts.push(`<a href="mailto:${m.email}" class="text-decoration-none text-muted" onclick="event.stopPropagation()"><i class="bi bi-envelope"></i> ${m.email}</a>`);
                 if (m.phone) parts.push(`<span class="text-muted"><i class="bi bi-telephone"></i> ${m.phone}</span>`);
                 const contactInfo = parts.join(' &bull; ');
 
@@ -207,20 +227,40 @@
             }).join('');
 
             col.innerHTML = `
-                <div class="card h-100 shadow-sm">
+                <div class="card h-100 shadow-sm" style="cursor: pointer;" onclick="editHousehold('${h.household_id}')">
                     <div class="card-header bg-light d-flex justify-content-between align-items-center">
                         <h5 class="card-title mb-0 text-truncate" title="${h.household_name}">${h.household_name}</h5>
+                        <!-- Dropdown Menu -->
                         <div class="dropdown">
-                            <button class="btn btn-sm btn-link text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <!-- stopPropagation on button is crucial -->
+                            <button class="btn btn-sm btn-link text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" onclick="event.stopPropagation()">
                                 <i class="bi bi-three-dots-vertical"></i>
                             </button>
                             <ul class="dropdown-menu dropdown-menu-end">
                                 <li><a class="dropdown-item" href="javascript:void(0)" onclick="editHousehold('${h.household_id}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+                                <li><a class="dropdown-item" href="javascript:void(0)" onclick="viewHouseholdDonations('${h.household_id}')"><i class="bi bi-wallet2 me-2"></i>History</a></li>
+                                <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item text-danger" href="javascript:void(0)" onclick="deleteHousehold('${h.household_id}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
                             </ul>
                         </div>
                     </div>
                     <div class="card-body">
+                         <!-- Statistics Row -->
+                         <div class="row mb-3 text-center border-bottom pb-2">
+                            <div class="col-4 border-end">
+                                <span class="d-block small text-muted text-uppercase" style="font-size: 0.7rem;">Lifetime</span>
+                                <span class="fw-bold text-success">${formattedTotal}</span>
+                            </div>
+                            <div class="col-4 border-end">
+                                <span class="d-block small text-muted text-uppercase" style="font-size: 0.7rem;">Gifts</span>
+                                <span class="fw-bold">${count}</span>
+                            </div>
+                             <div class="col-4">
+                                <span class="d-block small text-muted text-uppercase" style="font-size: 0.7rem;">Last</span>
+                                <span class="fw-bold small">${lastGiftDate}</span>
+                            </div>
+                        </div>
+
                         <div class="mb-3">
                             ${membersHtml}
                         </div>
@@ -232,6 +272,25 @@
             `;
             grid.appendChild(col);
         });
+    }
+
+    function viewHouseholdDonations(id) {
+        // Find the donations nav link to update active state
+        // The onclick in sidebar is: onclick="switchView('view-donations', this)"
+        const donationsLink = document.querySelector('a[onclick*="view-donations"]');
+
+        switchView('view-donations', donationsLink);
+
+        // Update Filter
+        const hhSelect = document.getElementById('dm-filter-household');
+        if (hhSelect) {
+            hhSelect.value = id;
+            // If the ID isn't in the list (shouldn't happen if data syncs), fallback
+            if (hhSelect.value !== id) hhSelect.value = 'All';
+        }
+
+        // Render
+        renderDonationsTable();
     }
 
     // Dynamic member input management
