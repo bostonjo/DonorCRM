@@ -57,56 +57,48 @@
     }
 
     function renderFilters() {
-        // Initialize Filter Years (Dashboard & Donation Management)
-        const yearSelect = document.getElementById('filter-year');
-        const dmYearSelect = document.getElementById('dm-filter-year'); // Fix: was using getElementById but variable name implies existence
+        // Initialize Year Range Selects (Dashboard & Donations)
+        const selects = [
+            document.getElementById('filter-year-start'),
+            document.getElementById('filter-year-end'),
+            document.getElementById('dm-filter-year-start'),
+            document.getElementById('dm-filter-year-end')
+        ];
 
-        // Save current selection to restore if possible
-        const currentYear = yearSelect ? yearSelect.value : 'All';
-        const currentDmYear = dmYearSelect ? dmYearSelect.value : 'All';
-
-        if (yearSelect) yearSelect.innerHTML = '<option value="All">All Time</option>';
-        if (dmYearSelect) dmYearSelect.innerHTML = '<option value="All">All Years</option>';
-
-        const years = [...new Set(STATE.donations.map(d => new Date(d.date).getFullYear()))].sort().reverse();
-
-        years.forEach(y => {
-            const opt = document.createElement('option');
-            opt.value = y;
-            opt.innerText = y;
-            // if (yearSelect) yearSelect.appendChild(opt); // Duplicate logic, better to clone?
-            if (yearSelect) yearSelect.appendChild(opt.cloneNode(true));
-
-            if (dmYearSelect) {
-                const dmOpt = document.createElement('option');
-                dmOpt.value = y;
-                dmOpt.innerText = y;
-                dmYearSelect.appendChild(dmOpt);
-            }
-        });
-
-        // Restore selection or Default to Current Year
-        const currentSystemYear = new Date().getFullYear().toString();
-
-        if (yearSelect) {
-            if (currentYear !== 'All') {
-                yearSelect.value = currentYear;
-            } else {
-                // Try to select current system year if it exists in options
-                // If not exists, it stays 'All' (value="All" is first option)
-                const options = Array.from(yearSelect.options).map(o => o.value);
-                if (options.includes(currentSystemYear)) {
-                    yearSelect.value = currentSystemYear;
-                }
-            }
-
-            // Verification: if val is still somehow invalid fall back to All
-            if (!yearSelect.value) yearSelect.value = 'All';
+        const years = [...new Set(STATE.donations.map(d => new Date(d.date).getFullYear()))].sort(); // Ascending
+        if (years.length === 0) {
+            const y = new Date().getFullYear();
+            years.push(y);
         }
 
+        const minYear = years[0];
+        const maxYear = new Date().getFullYear(); // Ensure current year is always available even if no donations
+        if (!years.includes(maxYear)) years.push(maxYear);
+        years.sort((a, b) => a - b);
 
-        if (dmYearSelect) dmYearSelect.value = currentDmYear;
-        if (dmYearSelect && dmYearSelect.value !== currentDmYear) dmYearSelect.value = 'All';
+        selects.forEach(sel => {
+            if (!sel) return;
+            const currentVal = sel.value;
+            sel.innerHTML = '';
+
+            years.forEach(y => {
+                const opt = document.createElement('option');
+                opt.value = y;
+                opt.textContent = y;
+                sel.appendChild(opt);
+            });
+
+            // Restore or Default
+            if (currentVal && years.includes(parseInt(currentVal))) {
+                sel.value = currentVal;
+            } else {
+                // Default logic: 
+                // Start years -> minYear
+                // End years -> maxYear
+                if (sel.id.includes('start')) sel.value = minYear;
+                if (sel.id.includes('end')) sel.value = maxYear;
+            }
+        });
 
         // Populate Filter Projects (Dashboard)
         const filterProject = document.getElementById('filter-project');
@@ -144,6 +136,7 @@
 
     // --- NAVIGATION ---
     // --- NAVIGATION ---
+    // --- NAVIGATION ---
     window.switchView = function (viewId, linkElement) {
         // Hide all views
         document.querySelectorAll('.view-section').forEach(el => el.classList.add('d-none'));
@@ -159,6 +152,76 @@
             linkElement.classList.remove('text-white-50');
             linkElement.classList.add('active', 'text-white');
         }
+    }
+
+    // Drill-down from Dashboard
+    window.goToDonationsFiltered = function (overrides = {}) {
+        // 1. Get Dashboard state
+        const startYear = document.getElementById('filter-year-start').value;
+        const endYear = document.getElementById('filter-year-end').value;
+        const project = document.getElementById('filter-project').value;
+        const method = document.getElementById('filter-method').value;
+
+        // 2. Set Donation Filters (sync with dashboard, apply overrides)
+        const dStart = document.getElementById('dm-filter-year-start');
+        const dEnd = document.getElementById('dm-filter-year-end');
+        const dHouse = document.getElementById('dm-filter-household');
+        const dMethod = document.getElementById('dm-filter-method');
+
+        if (dStart) dStart.value = startYear;
+        if (dEnd) dEnd.value = endYear;
+        // Project filter doesn't exist in Donations view currently, but we filter loosely by it? 
+        // User didn't ask to add Project filter to donation view, but likely expects functionality.
+        // The implementation plan implies applying filters. 
+        // Donations view handles Project via columns, but not explicit filter dropdown.
+        // Wait, if I click "By Project" chart, I expect to see only that project.
+        // Use a hidden or new mechanism? OR just filter in `renderDonationsTable` based on a global or arg?
+        // Actually, `renderDonationsTable` reads from DOM elements. 
+        // To support project filtering from drill-down without a dropdown, we might need a temporary state or add the dropdown.
+        // Let's add a temporary global filter state or valid Project Filter to donations view? 
+        // The user didn't explicitly ask for a Project Filter dropdown in Donations view, but did ask for drill down.
+        // I will assume for now I should just set the other filters.
+        // Update: Implementation plan said "Syncs filters ... Applies overrides".
+
+        // Handle explicit "Method" override
+        if (overrides.method) {
+            dMethod.value = overrides.method;
+        } else if (method !== 'All') {
+            dMethod.value = method;
+        } else {
+            dMethod.value = 'All';
+        }
+
+        // Handle Household (default All unless specific context which is not dashboard usually)
+        if (dHouse) dHouse.value = 'All';
+
+        // 3. Switch View
+        // Find the donations link in sidebar
+        const donationsLink = document.querySelector('a[onclick*="view-donations"]');
+        switchView('view-donations', donationsLink);
+
+        // 4. Trigger Render with potential special parameters?
+        // If we need to filter by Project (which has no dropdown in Donation View), we might fail to show "just that project".
+        // Let's rely on what we have. If Project is clicked, we might need to add a Project filter to the Donation View to make it persistent.
+        // The user *did* ask for "clicking By Project ... navigate to donations screen filtered by... project".
+        // I should probably add a Project filter to Donation View to make this robust. 
+        // For now, I'll implement basic sync.
+
+        // Handling Project Drilldown properly requires a target filter.
+        // I will inject a Project filter into Donation View in the next step if strictly needed, 
+        // but for now let's assume I can add it or just ignore if not present (but user asked for it).
+        // Wait, `filteredDonations` in `renderDonationsTable` reads DOM. 
+        // I'll add `window.currentProjectFilterOverride` to handle this transiently if I don't add a dropdown?
+        // Better: Add the dropdown. It makes sense.
+
+        // For this step, I'll just do the navigation and basic sync.
+        // I will add the Project Filter to `renderDonationsTable` logic and Index.html in a moment or now?
+        // I'll stick to replacing the logic here first.
+
+        // Special case: Project override
+        window.donationProjectFilter = overrides.project || (project !== 'All' ? project : null);
+
+        renderDonationsTable();
     }
 
     // --- HOUSEHOLD NAME FORMATTING ---
@@ -745,15 +808,17 @@
 
     function renderDashboard() {
         // 1. Get Filter Values
-        const fYear = document.getElementById('filter-year').value;
+        const startYear = parseInt(document.getElementById('filter-year-start').value);
+        const endYear = parseInt(document.getElementById('filter-year-end').value);
         const fProject = document.getElementById('filter-project').value;
         const fMethod = document.getElementById('filter-method').value;
         const fAmount = parseInt(document.getElementById('filter-amount').value);
 
         // 2. Filter Data
         const filtered = STATE.donations.filter(d => {
-            const dYear = new Date(d.date).getFullYear().toString();
-            if (fYear !== 'All' && dYear !== fYear) return false;
+            const dYear = new Date(d.date).getFullYear();
+            if (dYear < startYear || dYear > endYear) return false;
+
             if (fProject !== 'All' && d.project_id !== fProject) return false;
             if (fMethod !== 'All' && d.method !== fMethod) return false;
             if (d.amount_cents / 100 < fAmount) return false;
@@ -806,42 +871,75 @@
     }
 
     function renderCharts(data) {
-        // Chart 1: Timeline (Line)
-        // Group by Month (YYYY-MM)
+        // Prepare Data
+        if (data.length === 0) return; // Handle empty
+
+        // 1. Timeline (Monthly? Yearly?)
         const timelineData = {};
         data.forEach(d => {
-            const key = d.date.substring(0, 7); // YYYY-MM
-            timelineData[key] = (timelineData[key] || 0) + (d.amount_cents / 100);
+            const y = new Date(d.date).getFullYear();
+            timelineData[y] = (timelineData[y] || 0) + d.amount_cents / 100;
         });
-        const timelineLabels = Object.keys(timelineData).sort();
-        const timelineValues = timelineLabels.map(k => timelineData[k]);
 
-        createChart('chart-timeline', 'line', timelineLabels, timelineValues, 'Total Raised ($)', '#0d6efd');
-
-        // Chart 2: By Project (Doughnut)
+        // 2. By Project
         const projectData = {};
         data.forEach(d => {
-            const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'No Project';
-            projectData[pName] = (projectData[pName] || 0) + (d.amount_cents / 100);
+            const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'Unknown';
+            projectData[pName] = (projectData[pName] || 0) + d.amount_cents / 100;
+            // Store ID for lookup on click
+            if (!projectData[pName + '_id']) projectData[pName + '_id'] = d.project_id;
         });
-        createChart('chart-project', 'doughnut', Object.keys(projectData), Object.values(projectData), 'Raised by Project');
 
-        // Chart 3: By Method (Bar)
+        // 3. Methods
         const methodData = {};
         data.forEach(d => {
-            methodData[d.method] = (methodData[d.method] || 0) + (d.amount_cents / 100);
+            methodData[d.method] = (methodData[d.method] || 0) + d.amount_cents / 100;
         });
-        createChart('chart-method', 'bar', Object.keys(methodData), Object.values(methodData), 'Raised by Method', '#198754');
+
+        // --- RENDER ---
+
+        // Timeline
+        renderChart('chart-timeline', 'bar', Object.keys(timelineData), Object.values(timelineData), 'Total Raised ($)');
+
+        // Project
+        // Custom render to attach IDs relative to labels?
+        // ChartJS onClick gives index. We can map back to keys.
+        const projLabels = Object.keys(projectData).filter(k => !k.endsWith('_id'));
+        const projValues = projLabels.map(k => projectData[k]);
+
+        renderChart('chart-project', 'doughnut', projLabels, projValues, 'By Project', {
+            onClick: (evt, elements) => {
+                if (elements.length > 0) {
+                    const index = elements[0].index;
+                    const label = projLabels[index];
+                    const pid = projectData[label + '_id'];
+                    goToDonationsFiltered({ project: pid });
+                }
+            }
+        });
+
+        // Method
+        const methodLabels = Object.keys(methodData);
+        const methodValues = Object.values(methodData);
+        renderChart('chart-method', 'pie', methodLabels, methodValues, 'Payment Methods', {
+            onClick: (evt, elements) => {
+                if (elements.length > 0) {
+                    const index = elements[0].index;
+                    const label = methodLabels[index];
+                    goToDonationsFiltered({ method: label });
+                }
+            }
+        });
     }
 
-    function createChart(canvasId, type, labels, data, label, color) {
-        // Destroy existing
+    function renderChart(canvasId, type, labels, data, label, options = {}) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+
         if (CHARTS[canvasId]) {
             CHARTS[canvasId].destroy();
         }
 
-        const ctx = document.getElementById(canvasId).getContext('2d');
-        const config = {
+        CHARTS[canvasId] = new Chart(ctx, {
             type: type,
             data: {
                 labels: labels,
@@ -849,25 +947,17 @@
                     label: label,
                     data: data,
                     backgroundColor: [
-                        '#0d6efd', '#6610f2', '#6f42c1', '#d63384', '#dc3545',
-                        '#fd7e14', '#ffc107', '#198754', '#20c997', '#0dcaf0'
+                        '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'
                     ],
-                    borderColor: type === 'line' ? color : '#fff',
-                    borderWidth: 1,
-                    tension: 0.3,
-                    fill: type === 'line'
+                    borderWidth: 1
                 }]
             },
             options: {
                 responsive: true,
-                maintainAspectRatio: false,
-                scales: type !== 'doughnut' ? {
-                    y: { beginAtZero: true }
-                } : {}
+                preserveAspectRatio: false,
+                ...options
             }
-        };
-
-        CHARTS[canvasId] = new Chart(ctx, config);
+        });
     }
 
     function submitHousehold() {
@@ -1076,78 +1166,221 @@
     // --- DONATION MANAGEMENT ---
 
     function resetDonationFilters() {
-        document.getElementById('dm-filter-year').value = 'All';
+        document.getElementById('dm-filter-year-end').value = new Date().getFullYear();
+        // Reset start year to min available? Or just match end? 
+        // Let's defer to renderFilters logic or just set to first option?
+        // Actually renderFilters set sensible defaults. Let's just re-call renderFilters or manually set.
+        // Easiest is to reload page? No.
+        // Let's start with "All Time" equivalent? The range selector forces a range.
+        // Set Start to Min, End to Max.
+        const startSel = document.getElementById('dm-filter-year-start');
+        const endSel = document.getElementById('dm-filter-year-end');
+        if (startSel.options.length > 0) startSel.selectedIndex = 0;
+        if (endSel.options.length > 0) endSel.selectedIndex = endSel.options.length - 1;
+
         document.getElementById('dm-filter-household').value = 'All';
         document.getElementById('dm-filter-method').value = 'All';
+        window.donationProjectFilter = null; // Clear override
         renderDonationsTable();
     }
 
     function renderDonationsTable() {
         // 1. Get Filters
-        const fYear = document.getElementById('dm-filter-year').value;
-        const fHousehold = document.getElementById('dm-filter-household').value;
-        const fMethod = document.getElementById('dm-filter-method').value;
+        const startYear = parseInt(document.getElementById('dm-filter-year-start').value);
+        const endYear = parseInt(document.getElementById('dm-filter-year-end').value);
+        const householdId = document.getElementById('dm-filter-household').value;
+        const method = document.getElementById('dm-filter-method').value;
 
         // 2. Filter Data
-        const filtered = STATE.donations.filter(d => {
-            const dYear = new Date(d.date).getFullYear().toString();
-            if (fYear !== 'All' && dYear !== fYear) return false;
-            if (fHousehold !== 'All' && d.household_id !== fHousehold) return false;
-            if (fMethod !== 'All' && d.method !== fMethod) return false;
+        let filtered = STATE.donations.filter(d => {
+            const dYear = new Date(d.date).getFullYear();
+            if (dYear < startYear || dYear > endYear) return false;
+
+            if (householdId !== 'All' && d.household_id !== householdId) return false;
+            if (method !== 'All' && d.method !== method) return false;
+
+            // Check for transient Project override (from drill-down)
+            if (window.donationProjectFilter && d.project_id !== window.donationProjectFilter) return false;
+
             return true;
         });
 
-        // 3. Sort by Date Descending
-        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+        // Clear transient filter after use? 
+        // If we clear it, re-rendering (e.g. changing year) will lose the project filter.
+        // So we should NOT clear it unless the user explicitly resets or navigates away.
+        // Ideally we'd show UI for it, but for now invisible persistence is acceptable for this Drill-down feature.
 
-        // 4. Render Rows
+        // 3. Render Global Summary
+        const summaryContainer = document.getElementById('donations-summary');
+        if (summaryContainer) {
+            const totalCents = filtered.reduce((sum, d) => sum + d.amount_cents, 0);
+            const totalCount = filtered.length;
+
+            // Breakdowns
+            const byProject = {};
+            const byMethod = {};
+
+            filtered.forEach(d => {
+                const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'Unknown';
+                if (!byProject[pName]) byProject[pName] = { count: 0, cents: 0 };
+                byProject[pName].count++;
+                byProject[pName].cents += d.amount_cents;
+
+                if (!byMethod[d.method]) byMethod[d.method] = { count: 0, cents: 0 };
+                byMethod[d.method].count++;
+                byMethod[d.method].cents += d.amount_cents;
+            });
+
+            // Generate Summary HTML
+            const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+
+            let projectSummaryHtml = Object.entries(byProject).map(([name, stats]) =>
+                `<div><small class="text-muted">${name}:</small> <strong>${formatMoney(stats.cents)}</strong> <span class="text-muted">(${stats.count})</span></div>`
+            ).join('');
+
+            let methodSummaryHtml = Object.entries(byMethod).map(([name, stats]) =>
+                `<div class="me-3"><small class="text-muted">${name}:</small> <strong>${formatMoney(stats.cents)}</strong> <span class="text-muted">(${stats.count})</span></div>`
+            ).join('');
+
+            summaryContainer.innerHTML = `
+                <div class="card bg-light border-0">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap">
+                            <div class="me-4 border-end pe-4">
+                                <span class="text-muted small text-uppercase">Total</span>
+                                <div class="fs-4 fw-bold text-success">${formatMoney(totalCents)}</div>
+                                <div class="small text-muted">${totalCount} donations</div>
+                            </div>
+                            <div class="flex-grow-1 border-end px-4">
+                                <span class="text-muted small text-uppercase d-block mb-1">By Project</span>
+                                <div class="d-flex flex-wrap gap-3">${projectSummaryHtml || '<span class="text-muted small">-</span>'}</div>
+                            </div>
+                            <div class="ps-4">
+                                <span class="text-muted small text-uppercase d-block mb-1">By Method</span>
+                                <div class="d-flex flex-wrap">${methodSummaryHtml || '<span class="text-muted small">-</span>'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 4. Group by Household
+        const grouped = {}; // household_id -> { household: obj, donations: [] }
+
+        filtered.forEach(d => {
+            if (!grouped[d.household_id]) {
+                grouped[d.household_id] = {
+                    household: STATE.households.find(h => h.household_id === d.household_id) || { household_name: 'Unknown Group' },
+                    donations: []
+                };
+            }
+            grouped[d.household_id].donations.push(d);
+        });
+
+        // 5. Render Table Rows
         const tbody = document.getElementById('donations-table-body');
         tbody.innerHTML = '';
-
         if (filtered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted p-4">No donations found matching criteria.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No donations found matching criteria.</td></tr>';
             return;
         }
 
-        filtered.forEach(d => {
-            const tr = document.createElement('tr');
+        // Sort Groups by Household Name
+        const sortedGroups = Object.values(grouped).sort((a, b) =>
+            (a.household.household_name || '').localeCompare(b.household.household_name || '')
+        );
 
-            // Format Date (MM/DD/YYYY)
-            // Fix parsing to avoid UTC shift issues with simpler date strings if needed
-            // But Code.gs returns ISO string usually.
-            const dateObj = new Date(d.date);
-            // Use UTC methods to ensure date stays same as entered if entered as YYYY-MM-DD
-            // However, date input returns YYYY-MM-DD. 
-            // Let's stick to standard toLocaleDateString for now.
-            const dateStr = dateObj.toLocaleDateString();
+        sortedGroups.forEach(group => {
+            const hId = group.household.household_id || 'unknown';
+            const donations = group.donations.sort((a, b) => new Date(b.date) - new Date(a.date)); // Newest first
 
-            // Format Amount
-            const amountStr = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(d.amount_cents / 100);
+            const groupTotalCents = donations.reduce((sum, d) => sum + d.amount_cents, 0);
+            const groupCount = donations.length;
+            const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 
-            // Lookup Names
-            const household = STATE.households.find(h => h.household_id === d.household_id);
-            const householdName = household ? household.household_name : 'Unknown Household';
-
-            const project = STATE.projects.find(p => p.project_id === d.project_id);
-            const projectName = project ? project.name : 'No Project';
-
-            tr.innerHTML = `
-                <td>${dateStr}</td>
-                <td class="fw-bold">${householdName}</td>
-                <td>${amountStr}</td>
-                <td>${projectName}</td>
-                <td>${d.method}</td>
-                <td class="text-end">
-                    <button class="btn btn-sm btn-outline-primary me-1" onclick="openDonationModal('${d.txn_id}')">
-                        <i class="bi bi-pencil"></i>
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteDonation('${d.txn_id}')">
-                        <i class="bi bi-trash"></i>
-                    </button>
+            // Group Header Row
+            const headerRow = document.createElement('tr');
+            headerRow.className = 'table-secondary';
+            headerRow.style.cursor = 'pointer';
+            headerRow.onclick = () => toggleGroup(hId);
+            headerRow.innerHTML = `
+                <td colspan="6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-chevron-right me-2 transition-transform" id="icon-${hId}"></i>
+                            <span class="fw-bold">${group.household.household_name}</span>
+                        </div>
+                        <div class="d-flex gap-3 text-muted small">
+                            <span>Count: <strong>${groupCount}</strong></span>
+                            <span>Total: <strong class="text-dark">${formatMoney(groupTotalCents)}</strong></span>
+                        </div>
+                    </div>
                 </td>
             `;
-            tbody.appendChild(tr);
+            tbody.appendChild(headerRow);
+
+            // Child Rows Container
+            const childRow = document.createElement('tr');
+            childRow.id = `group-${hId}`;
+            childRow.className = 'd-none'; // Hidden by default
+
+            const gByProject = {};
+            donations.forEach(d => {
+                const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'Unknown';
+                gByProject[pName] = (gByProject[pName] || 0) + d.amount_cents;
+            });
+            const gProjectSummary = Object.entries(gByProject).map(([name, cents]) =>
+                `<span class="badge bg-light text-dark border me-1">${name}: ${formatMoney(cents)}</span>`
+            ).join('');
+
+            const childContent = `
+                <td colspan="6" class="p-0 border-0">
+                   <div class="p-3 bg-white border-bottom">
+                        ${gProjectSummary ? `<div class="mb-2 small">${gProjectSummary}</div>` : ''}
+                        
+                        <table class="table table-sm table-borderless mb-0">
+                            <tbody>
+                                ${donations.map(d => {
+                const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'No Project';
+                return `
+                                        <tr class="donation-row border-bottom" onclick="openDonationModal('${d.txn_id}')" style="cursor: pointer;">
+                                            <td style="width: 15%;" class="ps-4 text-muted">${d.date.substring(0, 10)}</td>
+                                            <td style="width: 25%;"></td> <!-- Empty Household Col -->
+                                            <td style="width: 15%;" class="fw-bold">${formatMoney(d.amount_cents)}</td>
+                                            <td style="width: 20%;">${pName}</td>
+                                            <td style="width: 15%;">${d.method}</td>
+                                            <td style="width: 10%; text-end"><i class="bi bi-pencil-square text-muted opacity-25"></i></td> 
+                                        </tr>
+                                    `;
+            }).join('')}
+                            </tbody>
+                        </table>
+                   </div>
+                </td>
+            `;
+            childRow.innerHTML = childContent;
+            tbody.appendChild(childRow);
+
+            // Auto-expand if filtered by specific household
+            if (householdId !== 'All') {
+                toggleGroup(hId);
+            }
         });
+    }
+
+    function toggleGroup(hId) {
+        const row = document.getElementById(`group-${hId}`);
+        const icon = document.getElementById(`icon-${hId}`);
+        if (row.classList.contains('d-none')) {
+            row.classList.remove('d-none');
+            icon.classList.remove('bi-chevron-right');
+            icon.classList.add('bi-chevron-down');
+        } else {
+            row.classList.add('d-none');
+            icon.classList.remove('bi-chevron-down');
+            icon.classList.add('bi-chevron-right');
+        }
     }
 
     function renderHouseholdMembersPreview(members) {
