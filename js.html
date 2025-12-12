@@ -10,72 +10,129 @@
             .getInitialData();
     };
 
-    function initApp(data) {
-        STATE.households = data.households;
+    function initApp(resp) {
+        console.log('initApp started with response:', resp);
+        try {
+            if (!resp) throw new Error("No response received from backend");
+            if (resp.status === 'error') throw new Error("Server Error: " + resp.message);
+            if (!resp.data) throw new Error("Response is missing data payload");
 
-        STATE.projects = data.projects;
-        STATE.donations = data.donations;
+            const data = resp.data;
 
-        // Initialize Filter Years
+            STATE.households = data.households || [];
+            STATE.projects = data.projects || [];
+            STATE.donations = data.donations || [];
+
+            renderFilters();
+
+            // Populate Projects Dropdown (Modal)
+            // ... (rest of function)
+
+            const projectSelect = document.getElementById('project');
+            if (projectSelect) {
+                projectSelect.innerHTML = '<option value="">No Project</option>';
+                STATE.projects.forEach(p => {
+                    const option = document.createElement('option');
+                    option.value = p.project_id;
+                    option.textContent = p.name;
+                    projectSelect.appendChild(option);
+                });
+            } else {
+                console.warn('Project dropdown not found');
+            }
+
+            initAutocomplete();
+            renderHouseholdsDirectory();
+            renderProjectsDirectory();
+            try { renderDashboard(); } catch (e) { console.warn('Dashboard render failed', e); }
+            try { renderDonationsTable(); } catch (e) { console.warn('Donations table render failed', e); }
+
+            // Initialize auto-naming
+            setupHouseholdAutoNaming();
+
+        } catch (error) {
+            console.error('CRITICAL INIT ERROR:', error);
+            showError(error);
+        }
+    }
+
+    function renderFilters() {
+        // Initialize Filter Years (Dashboard & Donation Management)
         const yearSelect = document.getElementById('filter-year');
-        const years = [...new Set(data.donations.map(d => new Date(d.date).getFullYear()))].sort().reverse();
+        const dmYearSelect = document.getElementById('dm-filter-year'); // Fix: was using getElementById but variable name implies existence
+
+        // Save current selection to restore if possible
+        const currentYear = yearSelect ? yearSelect.value : 'All';
+        const currentDmYear = dmYearSelect ? dmYearSelect.value : 'All';
+
+        if (yearSelect) yearSelect.innerHTML = '<option value="All">All Time</option>';
+        if (dmYearSelect) dmYearSelect.innerHTML = '<option value="All">All Years</option>';
+
+        const years = [...new Set(STATE.donations.map(d => new Date(d.date).getFullYear()))].sort().reverse();
+
         years.forEach(y => {
             const opt = document.createElement('option');
             opt.value = y;
             opt.innerText = y;
-            yearSelect.appendChild(opt);
-            // Also populate Donation Management Year Filter
-            const dmOpt = document.createElement('option');
-            dmOpt.value = y;
-            dmOpt.innerText = y;
-            document.getElementById('dm-filter-year').appendChild(dmOpt);
+            // if (yearSelect) yearSelect.appendChild(opt); // Duplicate logic, better to clone?
+            if (yearSelect) yearSelect.appendChild(opt.cloneNode(true));
+
+            if (dmYearSelect) {
+                const dmOpt = document.createElement('option');
+                dmOpt.value = y;
+                dmOpt.innerText = y;
+                dmYearSelect.appendChild(dmOpt);
+            }
         });
 
-        // Populate Filter Projects
+        // Restore selection
+        if (yearSelect) yearSelect.value = currentYear;
+        // if restored value is not in list (e.g. year deleted?), it falls back to first option (All) automatically? 
+        // HTML select behavior: if value not found, it might pick the first one.
+        // We verify:
+        if (yearSelect && yearSelect.value !== currentYear) yearSelect.value = 'All';
+
+
+        if (dmYearSelect) dmYearSelect.value = currentDmYear;
+        if (dmYearSelect && dmYearSelect.value !== currentDmYear) dmYearSelect.value = 'All';
+
+        // Populate Filter Projects (Dashboard)
         const filterProject = document.getElementById('filter-project');
-        STATE.projects.forEach(p => {
-            const option = document.createElement('option');
-            option.value = p.project_id;
-            option.textContent = p.name;
-            filterProject.appendChild(option);
-        });
+        if (filterProject) {
+            const currentProj = filterProject.value;
+            filterProject.innerHTML = '<option value="All">All Projects</option>';
+            STATE.projects.forEach(p => {
+                const option = document.createElement('option');
+                option.value = p.project_id;
+                option.textContent = p.name;
+                filterProject.appendChild(option);
+            });
+            filterProject.value = currentProj;
+            if (filterProject.value !== currentProj) filterProject.value = 'All';
+        }
 
         // Populate Donation Management Household Filter
         const dmHouseholdSelect = document.getElementById('dm-filter-household');
-        // Sort households by name
-        const sortedHouseholds = [...STATE.households].sort((a, b) => (a.household_name || '').localeCompare(b.household_name || ''));
-        sortedHouseholds.forEach(h => {
-            const opt = document.createElement('option');
-            opt.value = h.household_id;
-            opt.textContent = h.household_name;
-            dmHouseholdSelect.appendChild(opt);
-        });
-
-        // Populate Projects Dropdown
-        // Populate Projects Dropdown
-        const projectSelect = document.getElementById('project');
-        projectSelect.innerHTML = '<option value="">No Project</option>';
-        STATE.projects.forEach(p => {
-            const option = document.createElement('option');
-            option.value = p.project_id;
-            option.textContent = p.name;
-            projectSelect.appendChild(option);
-        });
-
-        initAutocomplete();
-        initAutocomplete();
-        initAutocomplete();
-        renderHouseholdsDirectory();
-        renderHouseholdsDirectory();
-        renderProjectsDirectory();
-        renderDashboard(); // Initial Dash Load
-        renderDonationsTable(); // Initial Table Load
-        // Initialize auto-naming
-        setupHouseholdAutoNaming();
+        if (dmHouseholdSelect) {
+            const currentH = dmHouseholdSelect.value;
+            dmHouseholdSelect.innerHTML = '<option value="All">All Households</option>';
+            const sortedHouseholds = [...STATE.households].sort((a, b) => (a.household_name || '').localeCompare(b.household_name || ''));
+            sortedHouseholds.forEach(h => {
+                const opt = document.createElement('option');
+                opt.value = h.household_id;
+                opt.textContent = h.household_name;
+                dmHouseholdSelect.appendChild(opt);
+            });
+            dmHouseholdSelect.value = currentH;
+            if (dmHouseholdSelect.value !== currentH) dmHouseholdSelect.value = 'All';
+        }
     }
 
+
+
     // --- NAVIGATION ---
-    function navigate(viewId, linkElement) {
+    // --- NAVIGATION ---
+    window.switchView = function (viewId, linkElement) {
         // Hide all views
         document.querySelectorAll('.view-section').forEach(el => el.classList.add('d-none'));
         // Show target
@@ -447,6 +504,7 @@
                 STATE.households = STATE.households.filter(h => h.household_id !== id);
                 renderHouseholdsDirectory();
                 initAutocomplete(); // Refresh search index
+                renderFilters(); // Added to refresh household filters
                 showAlert('success', 'Household deleted successfully.');
             })
             .withFailureHandler(err => {
@@ -546,7 +604,8 @@
 
             // Refresh UI and Dropdown
             renderProjectsDirectory();
-            refreshProjectDropdown(); // We need to create this helper or inline it
+            refreshProjectDropdown();
+            renderFilters(); // Added to refresh dashboard project filter // We need to create this helper or inline it
 
             // Close Modal
             const modalEl = document.getElementById('addProjectModal');
@@ -583,6 +642,7 @@
                 STATE.projects = STATE.projects.filter(p => p.project_id !== id);
                 renderProjectsDirectory();
                 refreshProjectDropdown();
+                renderFilters(); // Added to refresh dashboard project filter
                 showAlert('success', 'Project deleted successfully.');
             })
             .withFailureHandler(err => {
@@ -835,6 +895,7 @@
             // Refresh UI
             renderHouseholdsDirectory();
             initAutocomplete(); // Update search index
+            renderFilters(); // Added to refresh household filters
 
             // Close Modal
             const modalEl = document.getElementById('addHouseholdModal');
@@ -1018,6 +1079,15 @@
         });
     }
 
+    function renderHouseholdMembersPreview(members) {
+        if (!members || members.length === 0) return;
+        const membersDisplay = document.getElementById('selected-household-members');
+        const memberInfo = members.map(m =>
+            `${m.first_name} ${m.last_name}${m.email ? ` (${m.email})` : ''}`
+        ).join('<br>');
+        membersDisplay.innerHTML = `<small class="text-muted">${memberInfo}</small>`;
+    }
+
     let donationModal = null; // Store Bootstrap Modal instance
 
     function openDonationModal(txn_id = null) {
@@ -1111,14 +1181,10 @@
                 if (donationModal) donationModal.hide();
 
                 // Update Local State
-                if (txnId) {
-                    // Update existing
+                if (txnId) { // Update
                     const idx = STATE.donations.findIndex(d => d.txn_id === txnId);
-                    if (idx !== -1) {
-                        STATE.donations[idx] = { ...STATE.donations[idx], ...payload };
-                    }
-                } else {
-                    // Add new (using returned ID)
+                    if (idx !== -1) STATE.donations[idx] = payload;
+                } else { // Create
                     payload.txn_id = res.txn_id;
                     STATE.donations.push(payload);
                 }
@@ -1126,6 +1192,7 @@
                 // Refresh Views
                 renderDonationsTable();
                 renderDashboard();
+                renderFilters(); // Added to refresh year/household filters
                 showAlert('success', txnId ? 'Donation updated!' : 'Donation logged successfully!');
             })
             .withFailureHandler((err) => {
@@ -1146,6 +1213,7 @@
                 // Refresh Views
                 renderDonationsTable();
                 renderDashboard();
+                renderFilters(); // Added to refresh filters
                 showAlert('success', 'Donation deleted.');
             })
             .withFailureHandler((err) => {

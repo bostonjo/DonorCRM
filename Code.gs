@@ -112,86 +112,100 @@ function setupDatabase() {
  * Returns households with nested members array.
  */
 function getInitialData() {
-  const ss = getDatasource();
-  if (!ss) throw new Error("Database not connected. Please run setupDatabase() first.");
+  try {
+    const ss = getDatasource();
+    if (!ss) throw new Error("Database not connected. Please run setupDatabase() first.");
 
-  const householdsSheet = ss.getSheetByName('db_Households');
-  const membersSheet = ss.getSheetByName('db_HouseholdMembers');
-  const projectsSheet = ss.getSheetByName('db_Projects');
-  
-  // Helper to get data or empty array
-  const getData = (sheet) => {
-    if (!sheet || sheet.getLastRow() < 2) return [];
-    return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-  };
-
-  const householdRows = getData(householdsSheet);
-  const memberRows = getData(membersSheet);
-  const projectRows = getData(projectsSheet);
-  const donationRows = getData(ss.getSheetByName('db_Donations'));
-
-  // Process Households
-  const households = householdRows.map(row => {
-    // household_id (0), household_name (1), search_index (2), address_json (3), created_at (4)
-    let address = {};
-    try {
-      address = row[3] ? JSON.parse(row[3]) : {};
-    } catch (e) {
-      console.error('Error parsing address JSON', e);
-    }
+    const householdsSheet = ss.getSheetByName('db_Households');
+    const membersSheet = ss.getSheetByName('db_HouseholdMembers');
+    const projectsSheet = ss.getSheetByName('db_Projects');
     
+    // Helper to get data or empty array
+    const getData = (sheet) => {
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    };
+
+    const householdRows = getData(householdsSheet);
+    const memberRows = getData(membersSheet);
+    const projectRows = getData(projectsSheet);
+    const donationRows = getData(ss.getSheetByName('db_Donations'));
+
+    // Process Households
+    const households = householdRows.map(row => {
+      // household_id (0), household_name (1), search_index (2), address_json (3), created_at (4)
+      let address = {};
+      try {
+        address = row[3] ? JSON.parse(row[3]) : {};
+      } catch (e) {
+        console.error('Error parsing address JSON', e);
+      }
+      
+      return {
+        household_id: String(row[0]),
+        household_name: String(row[1]),
+        search_index: String(row[2]),
+        address: address, // Object
+        members: [] 
+      };
+    });
+
+    // Process Members and add to their households
+    memberRows.forEach(row => {
+      // member_id (0), household_id (1), first_name (2), last_name (3), email (4), phone (5), member_order (6), created_at (7)
+      const member = {
+        member_id: String(row[0]),
+        household_id: String(row[1]),
+        first_name: String(row[2]),
+        last_name: String(row[3]),
+        email: String(row[4]),
+        phone: String(row[5]),
+        member_order: Number(row[6])
+      };
+      
+      // Find parent household and add member
+      const household = households.find(h => h.household_id === member.household_id);
+      if (household) {
+        household.members.push(member);
+      }
+    });
+
+    // Sort members by member_order within each household
+    households.forEach(h => {
+      h.members.sort((a, b) => a.member_order - b.member_order);
+    });
+
+    // Process Projects
+    const projects = projectRows.map(row => ({
+      project_id: String(row[0]),
+      name: String(row[1]),
+      description: String(row[2])
+    }));
+
+    // Process Donations
+    // Helper to safe-convert dates
+    const toIso = (val) => {
+        if (val instanceof Date) return val.toISOString();
+        if (val && !isNaN(Date.parse(val))) return new Date(val).toISOString();
+        return '';
+    };
+
+    const donations = (donationRows || []).map(row => ({
+      txn_id: String(row[0]),
+      household_id: String(row[1]),
+      project_id: String(row[2]),
+      date: toIso(row[3]), // Ensure String
+      amount_cents: Number(row[4]),
+      method: String(row[5])
+    }));
+
     return {
-      household_id: row[0],
-      household_name: row[1],
-      search_index: row[2],
-      address: address,
-      members: [] // Will be populated below
+        status: 'success',
+        data: { households, projects, donations }
     };
-  });
-
-  // Process Members and add to their households
-  memberRows.forEach(row => {
-    // member_id (0), household_id (1), first_name (2), last_name (3), email (4), phone (5), member_order (6), created_at (7)
-    const member = {
-      member_id: row[0],
-      household_id: row[1],
-      first_name: row[2],
-      last_name: row[3],
-      email: row[4],
-      phone: row[5],
-      member_order: row[6]
-    };
-    
-    // Find parent household and add member
-    const household = households.find(h => h.household_id === member.household_id);
-    if (household) {
-      household.members.push(member);
-    }
-  });
-
-  // Sort members by member_order within each household
-  households.forEach(h => {
-    h.members.sort((a, b) => a.member_order - b.member_order);
-  });
-
-  // Process Projects
-  const projects = projectRows.map(row => ({
-    project_id: row[0],
-    name: row[1],
-    description: row[2]
-  }));
-
-  // Process Donations
-  const donations = (donationRows || []).map(row => ({
-    txn_id: row[0],
-    household_id: row[1],
-    project_id: row[2],
-    date: row[3],
-    amount_cents: row[4],
-    method: row[5]
-  }));
-
-  return { households, projects, donations };
+  } catch (e) {
+      return { status: 'error', message: e.toString() + "\n" + e.stack };
+  }
 }
 
 /**
