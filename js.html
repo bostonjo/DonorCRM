@@ -1170,37 +1170,46 @@
             method: method
         };
 
-        const handlerSource = txnId ? 'updateDonation' : 'saveDonation';
+        const successHandler = (res) => {
+            btn.disabled = false;
+            btn.textContent = originalText;
 
-        google.script.run
-            .withSuccessHandler((res) => {
-                btn.disabled = false;
-                btn.textContent = originalText;
+            // Close Modal
+            if (donationModal) donationModal.hide();
 
-                // Close Modal
-                if (donationModal) donationModal.hide();
+            // Update Local State
+            if (txnId) { // Update
+                const idx = STATE.donations.findIndex(d => d.txn_id === txnId);
+                if (idx !== -1) STATE.donations[idx] = payload;
+            } else { // Create
+                payload.txn_id = res.txn_id;
+                STATE.donations.push(payload);
+            }
 
-                // Update Local State
-                if (txnId) { // Update
-                    const idx = STATE.donations.findIndex(d => d.txn_id === txnId);
-                    if (idx !== -1) STATE.donations[idx] = payload;
-                } else { // Create
-                    payload.txn_id = res.txn_id;
-                    STATE.donations.push(payload);
-                }
+            // Refresh Views
+            renderDonationsTable();
+            renderDashboard();
+            renderFilters(); // Added to refresh year/household filters
+            showAlert('success', txnId ? 'Donation updated!' : 'Donation logged successfully!');
+        };
 
-                // Refresh Views
-                renderDonationsTable();
-                renderDashboard();
-                renderFilters(); // Added to refresh year/household filters
-                showAlert('success', txnId ? 'Donation updated!' : 'Donation logged successfully!');
-            })
-            .withFailureHandler((err) => {
-                btn.disabled = false;
-                btn.textContent = originalText;
-                alert('Error: ' + err.message);
-            })
-        [handlerSource](payload);
+        const failureHandler = (err) => {
+            btn.disabled = false;
+            btn.textContent = originalText;
+            alert('Error: ' + err.message);
+        };
+
+        if (txnId) {
+            google.script.run
+                .withSuccessHandler(successHandler)
+                .withFailureHandler(failureHandler)
+                .updateDonation(payload);
+        } else {
+            google.script.run
+                .withSuccessHandler(successHandler)
+                .withFailureHandler(failureHandler)
+                .saveDonation(payload);
+        }
     }
 
     function deleteDonation(txn_id) {
