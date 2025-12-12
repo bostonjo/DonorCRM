@@ -515,6 +515,93 @@ function saveDonation(payload) {
 
 }
 
+/**
+ * updateDonation - Updates an existing donation.
+ */
+function updateDonation(payload) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    throw new Error('Could not obtain lock. Try again.');
+  }
+
+  try {
+    const sheet = ss.getSheetByName('db_Donations');
+    const data = sheet.getDataRange().getValues();
+    
+    // Find row by txn_id (index 0)
+    let rowIndex = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === payload.txn_id) {
+        rowIndex = i + 1; // Convert to 1-based Row Index
+        break;
+      }
+    }
+
+    if (rowIndex === -1) {
+      throw new Error('Donation not found.');
+    }
+
+    // Update Row
+    sheet.getRange(rowIndex, 2).setValue(payload.household_id); 
+    sheet.getRange(rowIndex, 3).setValue(payload.project_id);
+    sheet.getRange(rowIndex, 4).setValue(payload.date);
+    sheet.getRange(rowIndex, 5).setValue(payload.amount_cents); 
+    sheet.getRange(rowIndex, 6).setValue(payload.method);
+
+    return { success: true };
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * deleteDonation - Deletes a donation by ID.
+ */
+function deleteDonation(txn_id) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    throw new Error('Could not obtain lock. Try again.');
+  }
+
+  try {
+    const sheet = ss.getSheetByName('db_Donations');
+    const data = sheet.getDataRange().getValues();
+    
+    let rowIndex = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === txn_id) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+
+    if (rowIndex === -1) {
+      throw new Error('Donation not found.');
+    }
+
+    sheet.deleteRow(rowIndex);
+    return { success: true };
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // --- PROJECT MANAGEMENT ---
 
 /**

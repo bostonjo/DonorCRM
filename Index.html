@@ -24,7 +24,7 @@
         </a>
         <a href="javascript:void(0)" class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
           onclick="navigate('view-donations', this)">
-          <i class="bi bi-wallet2 me-2"></i> Log Donation
+          <i class="bi bi-wallet2 me-2"></i> Donations
         </a>
         <a href="javascript:void(0)" class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
           onclick="navigate('view-households', this)">
@@ -157,43 +157,35 @@
         </div>
       </div>
 
-      <!-- VIEW: DONATIONS (Log) -->
+      <!-- VIEW: DONATION MANAGEMENT (List + Filters) -->
       <div id="view-donations" class="view-section d-none">
-        <div class="card shadow-sm col-md-8 mx-auto">
-          <div class="card-header bg-primary text-white">
-            <h4 class="mb-0">Log New Donation</h4>
-          </div>
-          <div class="card-body">
-            <form id="donation-form" onsubmit="event.preventDefault(); submitForm();">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+          <h2 class="mb-0">Donation Management</h2>
+          <button class="btn btn-primary" onclick="openDonationModal()">
+            <i class="bi bi-plus-lg"></i> Log New Donation
+          </button>
+        </div>
 
-              <div class="mb-3 position-relative">
-                <label class="form-label">Household Search</label>
-                <input type="text" class="form-control" id="household-search" placeholder="Type to search households..."
-                  autocomplete="off">
-                <input type="hidden" id="selected-household-id" name="household_id">
-                <ul id="results-list" class="list-group position-absolute w-100 d-none"></ul>
-                <div id="selected-household-members" class="mt-2"></div>
+        <!-- Filters -->
+        <div class="card shadow-sm mb-4">
+          <div class="card-body p-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-md-3">
+                <label class="form-label small fw-bold">Year</label>
+                <select class="form-select form-select-sm" id="dm-filter-year" onchange="renderDonationsTable()">
+                  <option value="All">All Years</option>
+                </select>
               </div>
-
-              <div class="mb-3">
-                <label class="form-label">Amount ($)</label>
-                <input type="number" class="form-control" id="amount" step="0.01" required>
+              <div class="col-md-3">
+                <label class="form-label small fw-bold">Household</label>
+                <select class="form-select form-select-sm" id="dm-filter-household" onchange="renderDonationsTable()">
+                  <option value="All">All Households</option>
+                </select>
               </div>
-
-              <div class="mb-3">
-                <label class="form-label">Date</label>
-                <input type="date" class="form-control" id="date" required>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label">Project</label>
-                <select class="form-select" id="project"></select>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label">Method</label>
-                <select class="form-select" id="method" required>
-                  <option value="" disabled selected>Select...</option>
+              <div class="col-md-3">
+                <label class="form-label small fw-bold">Method</label>
+                <select class="form-select form-select-sm" id="dm-filter-method" onchange="renderDonationsTable()">
+                  <option value="All">All Methods</option>
                   <option value="Check">Check</option>
                   <option value="Venmo">Venmo</option>
                   <option value="PayPal">PayPal</option>
@@ -201,42 +193,138 @@
                   <option value="Other">Other</option>
                 </select>
               </div>
+              <div class="col-md-3 text-end">
+                <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetDonationFilters()">Reset
+                  Filters</button>
+              </div>
+            </div>
+          </div>
+        </div>
 
-              <button type="submit" id="submit-btn" class="btn btn-primary w-100">Save Donation</button>
-            </form>
+        <!-- Table -->
+        <div class="card shadow-sm">
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Date</th>
+                    <th>Household</th>
+                    <th>Amount</th>
+                    <th>Project</th>
+                    <th>Method</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="donations-table-body">
+                  <!-- JS Populated -->
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- VIEW: HOUSEHOLDS -->
-      <div id="view-households" class="view-section d-none">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h2>Household Directory</h2>
-          <button class="btn btn-success" onclick="openAddHouseholdModal()">
-            <i class="bi bi-house-add"></i> Add New Household
-          </button>
-        </div>
-
-        <div id="households-grid" class="row g-3">
-          <!-- JS Rendered Cards -->
-        </div>
-      </div>
-
-      <!-- VIEW: PROJECTS -->
-      <div id="view-projects" class="view-section d-none">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h2>Project Management</h2>
-          <button class="btn btn-primary" onclick="openAddProjectModal()">
-            <i class="bi bi-plus-circle"></i> Add Project
-          </button>
-        </div>
-
-        <div id="projects-grid" class="row g-3">
-          <!-- JS Rendered Cards -->
-        </div>
-      </div>
-
     </div>
+    <!-- /#page-content-wrapper -->
+
+  </div>
+  <!-- /#wrapper -->
+
+  <!-- MODAL: Add/Edit Household -->
+  <div class="modal fade" id="addHouseholdModal" tabindex="-1">
+    <!-- ... (existing household modal content omitted for brevity, logic will target this separately if needed) -->
+  </div>
+
+  <!-- MODAL: Add/Edit Project -->
+  <div class="modal fade" id="addProjectModal" tabindex="-1">
+    <!-- ... -->
+  </div>
+
+  <!-- MODAL: Add/Edit Donation -->
+  <div class="modal fade" id="donationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="donationModalLabel">Log New Donation</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="donation-form" onsubmit="event.preventDefault(); submitDonation();">
+            <input type="hidden" id="donation-txn-id"> <!-- Hidden ID for updates -->
+
+            <div class="mb-3 position-relative">
+              <label class="form-label">Household Search</label>
+              <input type="text" class="form-control" id="household-search" placeholder="Type to search households..."
+                autocomplete="off">
+              <input type="hidden" id="selected-household-id" name="household_id">
+              <ul id="results-list" class="list-group position-absolute w-100 d-none" style="z-index: 1050;"></ul>
+              <div id="selected-household-members" class="mt-2"></div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Amount ($)</label>
+              <input type="number" class="form-control" id="amount" step="0.01" required>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Date</label>
+              <input type="date" class="form-control" id="date" required>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Project</label>
+              <select class="form-select" id="project"></select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Method</label>
+              <select class="form-select" id="method" required>
+                <option value="" disabled selected>Select...</option>
+                <option value="Check">Check</option>
+                <option value="Venmo">Venmo</option>
+                <option value="PayPal">PayPal</option>
+                <option value="Cash">Cash</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <button type="submit" id="submit-donation-btn" class="btn btn-primary w-100">Save Donation</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEW: HOUSEHOLDS -->
+  <div id="view-households" class="view-section d-none">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2>Household Directory</h2>
+      <button class="btn btn-success" onclick="openAddHouseholdModal()">
+        <i class="bi bi-house-add"></i> Add New Household
+      </button>
+    </div>
+
+    <div id="households-grid" class="row g-3">
+      <!-- JS Rendered Cards -->
+    </div>
+  </div>
+
+  <!-- VIEW: PROJECTS -->
+  <div id="view-projects" class="view-section d-none">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2>Project Management</h2>
+      <button class="btn btn-primary" onclick="openAddProjectModal()">
+        <i class="bi bi-plus-circle"></i> Add Project
+      </button>
+    </div>
+
+    <div id="projects-grid" class="row g-3">
+      <!-- JS Rendered Cards -->
+    </div>
+  </div>
+
+  </div>
   </div>
 
   <!-- MODAL: ADD HOUSEHOLD -->

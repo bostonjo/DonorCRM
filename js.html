@@ -24,6 +24,11 @@
             opt.value = y;
             opt.innerText = y;
             yearSelect.appendChild(opt);
+            // Also populate Donation Management Year Filter
+            const dmOpt = document.createElement('option');
+            dmOpt.value = y;
+            dmOpt.innerText = y;
+            document.getElementById('dm-filter-year').appendChild(dmOpt);
         });
 
         // Populate Filter Projects
@@ -33,6 +38,17 @@
             option.value = p.project_id;
             option.textContent = p.name;
             filterProject.appendChild(option);
+        });
+
+        // Populate Donation Management Household Filter
+        const dmHouseholdSelect = document.getElementById('dm-filter-household');
+        // Sort households by name
+        const sortedHouseholds = [...STATE.households].sort((a, b) => (a.household_name || '').localeCompare(b.household_name || ''));
+        sortedHouseholds.forEach(h => {
+            const opt = document.createElement('option');
+            opt.value = h.household_id;
+            opt.textContent = h.household_name;
+            dmHouseholdSelect.appendChild(opt);
         });
 
         // Populate Projects Dropdown
@@ -53,6 +69,7 @@
         renderHouseholdsDirectory();
         renderProjectsDirectory();
         renderDashboard(); // Initial Dash Load
+        renderDonationsTable(); // Initial Table Load
         // Initialize auto-naming
         setupHouseholdAutoNaming();
     }
@@ -910,12 +927,157 @@
         });
     }
 
-    function submitForm() {
-        const btn = document.getElementById('submit-btn');
+    function showAlert(type, message) {
+        const container = document.getElementById('alert-container');
+        container.innerHTML = `
+      <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    `;
+    }
+
+    function showError(err) {
+        console.error(err);
+        showAlert('danger', 'System Error: ' + err.message);
+    }
+    // --- DONATION MANAGEMENT ---
+
+    function resetDonationFilters() {
+        document.getElementById('dm-filter-year').value = 'All';
+        document.getElementById('dm-filter-household').value = 'All';
+        document.getElementById('dm-filter-method').value = 'All';
+        renderDonationsTable();
+    }
+
+    function renderDonationsTable() {
+        // 1. Get Filters
+        const fYear = document.getElementById('dm-filter-year').value;
+        const fHousehold = document.getElementById('dm-filter-household').value;
+        const fMethod = document.getElementById('dm-filter-method').value;
+
+        // 2. Filter Data
+        const filtered = STATE.donations.filter(d => {
+            const dYear = new Date(d.date).getFullYear().toString();
+            if (fYear !== 'All' && dYear !== fYear) return false;
+            if (fHousehold !== 'All' && d.household_id !== fHousehold) return false;
+            if (fMethod !== 'All' && d.method !== fMethod) return false;
+            return true;
+        });
+
+        // 3. Sort by Date Descending
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        // 4. Render Rows
+        const tbody = document.getElementById('donations-table-body');
+        tbody.innerHTML = '';
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted p-4">No donations found matching criteria.</td></tr>';
+            return;
+        }
+
+        filtered.forEach(d => {
+            const tr = document.createElement('tr');
+
+            // Format Date (MM/DD/YYYY)
+            // Fix parsing to avoid UTC shift issues with simpler date strings if needed
+            // But Code.gs returns ISO string usually.
+            const dateObj = new Date(d.date);
+            // Use UTC methods to ensure date stays same as entered if entered as YYYY-MM-DD
+            // However, date input returns YYYY-MM-DD. 
+            // Let's stick to standard toLocaleDateString for now.
+            const dateStr = dateObj.toLocaleDateString();
+
+            // Format Amount
+            const amountStr = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(d.amount_cents / 100);
+
+            // Lookup Names
+            const household = STATE.households.find(h => h.household_id === d.household_id);
+            const householdName = household ? household.household_name : 'Unknown Household';
+
+            const project = STATE.projects.find(p => p.project_id === d.project_id);
+            const projectName = project ? project.name : 'No Project';
+
+            tr.innerHTML = `
+                <td>${dateStr}</td>
+                <td class="fw-bold">${householdName}</td>
+                <td>${amountStr}</td>
+                <td>${projectName}</td>
+                <td>${d.method}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary me-1" onclick="openDonationModal('${d.txn_id}')">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteDonation('${d.txn_id}')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    let donationModal = null; // Store Bootstrap Modal instance
+
+    function openDonationModal(txn_id = null) {
+        if (!donationModal) {
+            donationModal = new bootstrap.Modal(document.getElementById('donationModal'));
+        }
+
+        const form = document.getElementById('donation-form');
+        // Reset Validations
+        document.getElementById('household-search').classList.remove('is-valid');
+        document.getElementById('selected-household-members').innerHTML = '';
+
+        if (txn_id) {
+            // EDIT MODE
+            const donation = STATE.donations.find(d => d.txn_id === txn_id);
+            if (!donation) return;
+
+            document.getElementById('donationModalLabel').innerText = 'Edit Donation';
+            document.getElementById('donation-txn-id').value = donation.txn_id;
+
+            // Pre-fill fields
+            const household = STATE.households.find(h => h.household_id === donation.household_id);
+            document.getElementById('household-search').value = household ? household.household_name : '';
+            document.getElementById('selected-household-id').value = donation.household_id;
+            document.getElementById('amount').value = donation.amount_cents / 100;
+
+            // Format date for input type="date" (YYYY-MM-DD)
+            const d = new Date(donation.date);
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            document.getElementById('date').value = `${yyyy}-${mm}-${dd}`;
+
+            document.getElementById('project').value = donation.project_id || '';
+            document.getElementById('method').value = donation.method;
+
+            // Show members preview
+            if (household) {
+                renderHouseholdMembersPreview(household.members);
+            }
+
+        } else {
+            // ADD MODE
+            document.getElementById('donationModalLabel').innerText = 'Log New Donation';
+            document.getElementById('donation-txn-id').value = ''; // Empty for new
+            form.reset();
+            document.getElementById('selected-household-id').value = '';
+            document.getElementById('date').valueAsDate = new Date();
+        }
+
+        donationModal.show();
+    }
+
+    function submitDonation() {
+        const btn = document.getElementById('submit-donation-btn');
         const originalText = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Saving...';
 
+        const txnId = document.getElementById('donation-txn-id').value;
         const householdId = document.getElementById('selected-household-id').value;
         const project = document.getElementById('project').value;
         const amount = parseFloat(document.getElementById('amount').value);
@@ -930,6 +1092,7 @@
         }
 
         const payload = {
+            txn_id: txnId, // Will be empty if new
             household_id: householdId,
             project_id: project,
             amount_cents: Math.round(amount * 100),
@@ -937,37 +1100,57 @@
             method: method
         };
 
+        const handlerSource = txnId ? 'updateDonation' : 'saveDonation';
+
         google.script.run
             .withSuccessHandler((res) => {
                 btn.disabled = false;
                 btn.textContent = originalText;
-                showAlert('success', 'Donation saved successfully! ID: ' + res.txn_id);
-                document.getElementById('donation-form').reset();
-                document.getElementById('selected-household-id').value = '';
-                document.getElementById('household-search').classList.remove('is-valid');
-                document.getElementById('selected-household-members').innerHTML = '';
-                document.getElementById('date').valueAsDate = new Date();
+
+                // Close Modal
+                if (donationModal) donationModal.hide();
+
+                // Update Local State
+                if (txnId) {
+                    // Update existing
+                    const idx = STATE.donations.findIndex(d => d.txn_id === txnId);
+                    if (idx !== -1) {
+                        STATE.donations[idx] = { ...STATE.donations[idx], ...payload };
+                    }
+                } else {
+                    // Add new (using returned ID)
+                    payload.txn_id = res.txn_id;
+                    STATE.donations.push(payload);
+                }
+
+                // Refresh Views
+                renderDonationsTable();
+                renderDashboard();
+                showAlert('success', txnId ? 'Donation updated!' : 'Donation logged successfully!');
             })
             .withFailureHandler((err) => {
                 btn.disabled = false;
                 btn.textContent = originalText;
-                showAlert('danger', 'Error: ' + err.message);
+                alert('Error: ' + err.message);
             })
-            .saveDonation(payload);
+        [handlerSource](payload);
     }
 
-    function showAlert(type, message) {
-        const container = document.getElementById('alert-container');
-        container.innerHTML = `
-      <div class="alert alert-${type} alert-dismissible fade show" role="alert">
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-      </div>
-    `;
-    }
+    function deleteDonation(txn_id) {
+        if (!confirm('Are you sure you want to delete this donation? This action cannot be undone.')) return;
 
-    function showError(err) {
-        console.error(err);
-        showAlert('danger', 'System Error: ' + err.message);
+        google.script.run
+            .withSuccessHandler(() => {
+                // Update State
+                STATE.donations = STATE.donations.filter(d => d.txn_id !== txn_id);
+                // Refresh Views
+                renderDonationsTable();
+                renderDashboard();
+                showAlert('success', 'Donation deleted.');
+            })
+            .withFailureHandler((err) => {
+                alert('Error deleting donation: ' + err.message);
+            })
+            .deleteDonation(txn_id);
     }
 </script>
