@@ -92,6 +92,14 @@
                 <td>${emails || '<span class="text-muted">—</span>'}</td>
                 <td>${phones || '<span class="text-muted">—</span>'}</td>
                 <td>${address || '<span class="text-muted">—</span>'}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary me-2" onclick="editHousehold('${h.household_id}')">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteHousehold('${h.household_id}')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
             `;
             tbody.appendChild(tr);
         });
@@ -215,6 +223,7 @@
             <div class="row g-2">
                 <div class="col-md-6">
                     <input type="text" class="form-control" id="m${memberCount}-first" placeholder="First Name" required>
+                    <input type="hidden" id="m${memberCount}-id">
                 </div>
                 <div class="col-md-6">
                     <input type="text" class="form-control" id="m${memberCount}-last" placeholder="Last Name" required>
@@ -248,6 +257,9 @@
     function resetAddHouseholdModal() {
         // Reset Form
         document.getElementById('add-household-form').reset();
+        document.getElementById('household-id').value = ''; // Clear ID
+        document.querySelector('#addHouseholdModal .modal-title').textContent = 'Add New Household';
+        isHouseholdNameManuallyEdited = false; // Reset auto-naming flag
 
         // Reset members container to single member
         document.getElementById('members-container').innerHTML = `
@@ -256,6 +268,7 @@
                 <div class="row g-2">
                     <div class="col-md-6">
                         <input type="text" class="form-control" id="m1-first" placeholder="First Name" required>
+                         <input type="hidden" id="m1-id">
                     </div>
                     <div class="col-md-6">
                         <input type="text" class="form-control" id="m1-last" placeholder="Last Name" required>
@@ -270,10 +283,98 @@
             </div>
         `;
         memberCount = 1;
-        isHouseholdNameManuallyEdited = false; // Reset auto-naming flag
         attachNameListeners(1); // Re-attach listeners to new inputs
         setupPhoneFormatter(document.getElementById('m1-phone')); // Re-attach formatting
         setupEmailValidation(document.getElementById('m1-email')); // Re-attach validation
+    }
+
+    function editHousehold(id) {
+        const household = STATE.households.find(h => h.household_id === id);
+        if (!household) return;
+
+        // Reset modal to clean state
+        resetAddHouseholdModal();
+
+        // 1. Set Household ID and basic info
+        document.getElementById('household-id').value = household.household_id;
+        document.getElementById('h-name').value = household.household_name;
+        document.querySelector('#addHouseholdModal .modal-title').textContent = 'Edit Household';
+
+        // Manual edit flag true so we don't overwrite name while editing members
+        isHouseholdNameManuallyEdited = true;
+
+        // 2. Set Address
+        if (household.address) {
+            document.getElementById('h-street').value = household.address.street || '';
+            document.getElementById('h-street2').value = household.address.street2 || '';
+            document.getElementById('h-city').value = household.address.city || '';
+            document.getElementById('h-state').value = household.address.state || '';
+            document.getElementById('h-zip').value = household.address.zip || '';
+        }
+
+        // 3. Set Members
+        const container = document.getElementById('members-container');
+        container.innerHTML = '';
+        memberCount = 0;
+
+        household.members.forEach((m, index) => {
+            memberCount++;
+            const memberDiv = document.createElement('div');
+            memberDiv.className = 'member-input-group p-3 mb-3 border rounded bg-light';
+            memberDiv.id = `member-${memberCount}`;
+
+            // For first member, don't show remove button? Or allowed if multiple?
+            // Let's allow removing any member in edit mode, but validation requires at least 1.
+            const removeBtn = `<button type="button" class="btn btn-sm btn-outline-danger" onclick="removeMemberInput(${memberCount})">Remove</button>`;
+
+            memberDiv.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Member ${memberCount}</h6>
+                    ${removeBtn}
+                </div>
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="m${memberCount}-first" value="${m.first_name}" required>
+                         <input type="hidden" id="m${memberCount}-id" value="${m.member_id}">
+                    </div>
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="m${memberCount}-last" value="${m.last_name}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <input type="email" class="form-control" id="m${memberCount}-email" value="${m.email || ''}">
+                    </div>
+                    <div class="col-md-6">
+                        <input type="tel" class="form-control" id="m${memberCount}-phone" value="${m.phone || ''}">
+                    </div>
+                </div>
+            `;
+            container.appendChild(memberDiv);
+
+            // Attach listeners
+            attachNameListeners(memberCount);
+            setupPhoneFormatter(document.getElementById(`m${memberCount}-phone`));
+            setupEmailValidation(document.getElementById(`m${memberCount}-email`));
+        });
+
+        // Open Modal
+        const modal = new bootstrap.Modal(document.getElementById('addHouseholdModal'));
+        modal.show();
+    }
+
+    function deleteHousehold(id) {
+        if (!confirm('Are you sure you want to delete this household? This action cannot be undone.')) return;
+
+        google.script.run
+            .withSuccessHandler(() => {
+                STATE.households = STATE.households.filter(h => h.household_id !== id);
+                renderHouseholdsTable();
+                initAutocomplete(); // Refresh search index
+                showAlert('success', 'Household deleted successfully.');
+            })
+            .withFailureHandler(err => {
+                alert('Error deleting household: ' + err.message);
+            })
+            .deleteHousehold(id);
     }
 
     function submitHousehold() {
@@ -283,6 +384,7 @@
         btn.textContent = 'Saving...';
 
         // Collect household info
+        const household_id = document.getElementById('household-id').value;
         const household_name = document.getElementById('h-name').value;
         const address = {
             street: document.getElementById('h-street').value,
@@ -302,6 +404,7 @@
             const last_name = document.getElementById(`m${i}-last`).value;
             const email = document.getElementById(`m${i}-email`).value;
             const phone = document.getElementById(`m${i}-phone`).value;
+            const member_id = document.getElementById(`m${i}-id`).value; // Get ID if editing
 
             if (!first_name || !last_name) {
                 alert(`Member ${i}: First and Last Name are required.`);
@@ -329,7 +432,7 @@
                 return;
             }
 
-            members.push({ first_name, last_name, email, phone });
+            members.push({ member_id, first_name, last_name, email, phone });
         }
 
         if (members.length === 0) {
@@ -346,38 +449,65 @@
             return;
         }
 
-        const payload = { household_name, address, members };
+        const payload = { household_id, household_name, address, members };
 
-        google.script.run
-            .withSuccessHandler((res) => {
-                // Update Local State
-                STATE.households.push({
-                    household_id: res.household_id,
-                    household_name: res.household_name,
-                    address: address,
-                    members: members
-                });
+        const handler = (res) => {
+            // Handle Success (Create or Update)
+            const existingIdx = STATE.households.findIndex(h => h.household_id === res.household_id);
+            const newHousehold = {
+                household_id: res.household_id,
+                household_name: payload.household_name,
+                address: address,
+                members: members
+                // Note: Newly created members won't have IDs here until refresh, 
+                // but that's okay for UI display. Full refresh on page load fixes it.
+                // Ideally we'd return full object from server.
+            };
 
-                // Refresh UI
-                renderHouseholdsTable();
+            if (existingIdx !== -1) {
+                STATE.households[existingIdx] = newHousehold;
+            } else {
+                STATE.households.push(newHousehold);
+            }
 
-                // Close Modal
-                const modalEl = document.getElementById('addHouseholdModal');
-                const modal = bootstrap.Modal.getInstance(modalEl);
-                modal.hide();
+            // Refresh UI
+            renderHouseholdsTable();
+            initAutocomplete(); // Update search index
 
-                resetAddHouseholdModal();
+            // Close Modal
+            const modalEl = document.getElementById('addHouseholdModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            modal.hide();
 
-                btn.disabled = false;
-                btn.textContent = originalText;
-                showAlert('success', 'Household added successfully!');
-            })
-            .withFailureHandler((err) => {
-                btn.disabled = false;
-                btn.textContent = originalText;
-                alert('Error: ' + err.message);
-            })
-            .saveHousehold(payload);
+            // Reset Form
+            resetAddHouseholdModal();
+
+            btn.disabled = false;
+            btn.textContent = originalText;
+            showAlert('success', household_id ? 'Household updated successfully!' : 'Household added successfully!');
+        };
+
+        if (household_id) {
+            // Update
+            google.script.run
+                .withSuccessHandler(handler)
+                .withFailureHandler((err) => {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    alert('Error: ' + err.message);
+                })
+                .updateHousehold(payload);
+        } else {
+            // Create
+            google.script.run
+                .withSuccessHandler(handler)
+                .withFailureHandler((err) => {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    alert('Error: ' + err.message);
+                })
+                .saveHousehold(payload);
+        }
     }
 
 

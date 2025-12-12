@@ -103,6 +103,7 @@
                   <th>Email(s)</th>
                   <th>Phone(s)</th>
                   <th>Address</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="households-table-body">
@@ -126,6 +127,7 @@
         </div>
         <div class="modal-body">
           <form id="add-household-form">
+            <input type="hidden" id="household-id"> <!-- Hidden Household ID -->
 
             <!-- Members -->
             <div class="mb-4">
@@ -139,6 +141,7 @@
               <div id="members-container">
                 <!-- Member 1 (default) -->
                 <div class="member-input-group p-3 mb-3 border rounded bg-light" id="member-1">
+                  <input type="hidden" id="m1-id"> <!-- Hidden ID -->
                   <h6 class="mb-2">Member 1</h6>
                   <div class="row g-2">
                     <div class="col-md-6">

@@ -282,6 +282,182 @@ function saveHousehold(payload) {
 }
 
 /**
+ * deleteHousehold - Deletes a household and its members IF no donations exist.
+ */
+function deleteHousehold(household_id) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    throw new Error('Could not obtain lock. Try again.');
+  }
+
+  try {
+    const householdsSheet = ss.getSheetByName('db_Households');
+    const membersSheet = ss.getSheetByName('db_HouseholdMembers');
+    const donationsSheet = ss.getSheetByName('db_Donations');
+    
+    // Check for donations first
+    if (donationsSheet) {
+      const donationData = donationsSheet.getDataRange().getValues();
+      // Skip header, check household_id (col 1)
+      for (let i = 1; i < donationData.length; i++) {
+        if (donationData[i][1] === household_id) {
+           throw new Error("Cannot delete household with existing donations. Please delete donations first.");
+        }
+      }
+    }
+
+    // Delete members (reverse order to safely remove rows)
+    if (membersSheet) {
+      const memberData = membersSheet.getDataRange().getValues();
+      for (let i = memberData.length - 1; i >= 1; i--) { // Skip header
+        if (memberData[i][1] === household_id) {
+          membersSheet.deleteRow(i + 1);
+        }
+      }
+    }
+    
+    // Delete household
+    if (householdsSheet) {
+       const householdData = householdsSheet.getDataRange().getValues();
+       for (let i = householdData.length - 1; i >= 1; i--) { // Skip header
+         if (householdData[i][0] === household_id) {
+           householdsSheet.deleteRow(i + 1);
+           return { success: true };
+         }
+       }
+    }
+    
+    throw new Error("Household not found.");
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * updateHousehold - Updates household details and syncs members.
+ * Payload: { household_id, household_name, address: {...}, members: [...] }
+ */
+function updateHousehold(payload) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    throw new Error('Could not obtain lock. Try again.');
+  }
+
+  try {
+    const householdsSheet = ss.getSheetByName('db_Households');
+    const membersSheet = ss.getSheetByName('db_HouseholdMembers');
+    
+    // 1. Update Household Info
+    const householdData = householdsSheet.getDataRange().getValues();
+    let householdRowIndex = -1;
+    for (let i = 1; i < householdData.length; i++) {
+      if (householdData[i][0] === payload.household_id) {
+        householdRowIndex = i + 1;
+        break;
+      }
+    }
+    if (householdRowIndex === -1) throw new Error("Household not found.");
+
+    // Build new search_index
+    const memberNames = payload.members.map(m => `${m.last_name}, ${m.first_name}`).join(' | ');
+    const search_index = `${payload.household_name} | ${memberNames}`;
+    const address_json = JSON.stringify(payload.address || {});
+    
+    // Update Row: household_id(0), household_name(1), search_index(2), address_json(3)
+    // We update cols 2, 3, 4 (1-based indices) -> data array range is cols 2,3,4
+    householdsSheet.getRange(householdRowIndex, 2).setValue(payload.household_name);
+    householdsSheet.getRange(householdRowIndex, 3).setValue(search_index);
+    householdsSheet.getRange(householdRowIndex, 4).setValue(address_json);
+
+    // 2. Sync Members
+    const memberData = membersSheet.getDataRange().getValues();
+    
+    // Identify Rows belonging to this household
+    const memberRows = [];
+    for (let i = 1; i < memberData.length; i++) {
+        if (memberData[i][1] === payload.household_id) {
+            memberRows.push({ rowIndex: i + 1, data: memberData[i] });
+        }
+    }
+
+    // A. Update Existing Members & Identify New/Deleted
+    const payloadMemberIds = new Set(payload.members.filter(m => m.member_id).map(m => m.member_id));
+    
+    // Delete members in DB not in Payload
+    // Reverse order deletion
+    for (let i = memberRows.length - 1; i >= 0; i--) {
+        const dbMemberId = memberRows[i].data[0];
+        if (!payloadMemberIds.has(dbMemberId)) {
+            membersSheet.deleteRow(memberRows[i].rowIndex);
+        }
+    }
+
+    // Update or Insert from Payload
+    payload.members.forEach((m, index) => {
+        if (m.member_id) {
+            // Update
+            // Find current row index (cannot use cached index if deletions occurred above? 
+            // Actually deletions above definitely shift rows below them.
+            // Safer to scan again or Use a safer unique ID lookup per row update?
+            // To be robust: Scan for the ID again.
+            // Performance optimization: For small household (5 members), scanning is fast.
+            updateMemberRow(membersSheet, m, index); 
+        } else {
+            // Insert
+            const new_id = Utilities.getUuid();
+            membersSheet.appendRow([
+                new_id,
+                payload.household_id,
+                m.first_name,
+                m.last_name,
+                m.email || '',
+                m.phone || '',
+                index + 1, // member_order
+                new Date().toISOString()
+            ]);
+        }
+    });
+
+    return { success: true, household_id: payload.household_id };
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Helper to update a member row
+function updateMemberRow(sheet, member, order) {
+    const data = sheet.getDataRange().getValues();
+    for(let i=1; i<data.length; i++) {
+        if(data[i][0] === member.member_id) {
+            // Found it. Update name, email, phone, order (cols 3,4,5,6,7 -> array indices 2,3,4,5,6)
+            // Sheet Columns: 1:id, 2:hh_id, 3:first, 4:last, 5:email, 6:phone, 7:order
+            sheet.getRange(i+1, 3).setValue(member.first_name);
+            sheet.getRange(i+1, 4).setValue(member.last_name);
+            sheet.getRange(i+1, 5).setValue(member.email || '');
+            sheet.getRange(i+1, 6).setValue(member.phone || '');
+            sheet.getRange(i+1, 7).setValue(order + 1);
+            return;
+        }
+    }
+}
+
+/**
  * saveDonation - Appends a new donation record.
  * Now uses household_id instead of donor_id.
  */
