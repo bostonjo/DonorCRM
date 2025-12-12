@@ -289,6 +289,15 @@
                 return;
             }
 
+            // Email validation
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (email && !emailRegex.test(email)) {
+                alert(`Member ${i}: Please enter a valid email address.`);
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
             members.push({ first_name, last_name, email, phone });
         }
 
