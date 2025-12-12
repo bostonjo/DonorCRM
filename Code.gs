@@ -35,6 +35,7 @@ function getDatasource() {
 /**
  * setupDatabase - One-time setup.
  * Creates a new Spreadsheet if one doesn't exist/isn't linked.
+ * Now supports household-based donor management with multiple members per household.
  */
 function setupDatabase() {
   let ss = getDatasource();
@@ -51,9 +52,22 @@ function setupDatabase() {
   }
 
   const sheets = [
-    { name: 'db_Donors', headers: ['donor_id', 'status', 'type', 'search_index', 'json_data', 'created_at'] },
-    { name: 'db_Donations', headers: ['txn_id', 'donor_id', 'project_id', 'date', 'amount_cents', 'method', 'meta_json'] },
-    { name: 'db_Projects', headers: ['project_id', 'name', 'description'] }
+    { 
+      name: 'db_Households', 
+      headers: ['household_id', 'household_name', 'search_index', 'address_json', 'created_at'] 
+    },
+    { 
+      name: 'db_HouseholdMembers', 
+      headers: ['member_id', 'household_id', 'first_name', 'last_name', 'email', 'phone', 'member_order', 'created_at'] 
+    },
+    { 
+      name: 'db_Donations', 
+      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'meta_json'] 
+    },
+    { 
+      name: 'db_Projects', 
+      headers: ['project_id', 'name', 'description'] 
+    }
   ];
 
   sheets.forEach(config => {
@@ -65,8 +79,7 @@ function setupDatabase() {
     // Reset permissions/content
     sheet.clear();
     
-    // Check if we have data (headers already there? No, we cleared).
-    // Just append headers
+    // Append headers
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(config.headers);
     }
@@ -96,12 +109,14 @@ function setupDatabase() {
 
 /**
  * getInitialData - Fetches all necessary data for the frontend.
+ * Returns households with nested members array.
  */
 function getInitialData() {
   const ss = getDatasource();
   if (!ss) throw new Error("Database not connected. Please run setupDatabase() first.");
 
-  const donorsSheet = ss.getSheetByName('db_Donors');
+  const householdsSheet = ss.getSheetByName('db_Households');
+  const membersSheet = ss.getSheetByName('db_HouseholdMembers');
   const projectsSheet = ss.getSheetByName('db_Projects');
   
   // Helper to get data or empty array
@@ -110,24 +125,52 @@ function getInitialData() {
     return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
   };
 
-  const donorRows = getData(donorsSheet);
+  const householdRows = getData(householdsSheet);
+  const memberRows = getData(membersSheet);
   const projectRows = getData(projectsSheet);
 
-  // Process Donors
-  const donors = donorRows.map(row => {
-    // donor_id (0), status (1), type (2), search_index (3), json_data (4), created_at (5)
-    let parsedData = {};
+  // Process Households
+  const households = householdRows.map(row => {
+    // household_id (0), household_name (1), search_index (2), address_json (3), created_at (4)
+    let address = {};
     try {
-      parsedData = row[4] ? JSON.parse(row[4]) : {};
+      address = row[3] ? JSON.parse(row[3]) : {};
     } catch (e) {
-      console.error('Error parsing donor JSON', e);
+      console.error('Error parsing address JSON', e);
     }
     
     return {
-      donor_id: row[0],
-      search_index: row[3],
-      ...parsedData
+      household_id: row[0],
+      household_name: row[1],
+      search_index: row[2],
+      address: address,
+      members: [] // Will be populated below
     };
+  });
+
+  // Process Members and add to their households
+  memberRows.forEach(row => {
+    // member_id (0), household_id (1), first_name (2), last_name (3), email (4), phone (5), member_order (6), created_at (7)
+    const member = {
+      member_id: row[0],
+      household_id: row[1],
+      first_name: row[2],
+      last_name: row[3],
+      email: row[4],
+      phone: row[5],
+      member_order: row[6]
+    };
+    
+    // Find parent household and add member
+    const household = households.find(h => h.household_id === member.household_id);
+    if (household) {
+      household.members.push(member);
+    }
+  });
+
+  // Sort members by member_order within each household
+  households.forEach(h => {
+    h.members.sort((a, b) => a.member_order - b.member_order);
   });
 
   // Process Projects
@@ -137,11 +180,110 @@ function getInitialData() {
     description: row[2]
   }));
 
-  return { donors, projects };
+  return { households, projects };
+}
+
+/**
+ * getHouseholdDisplayName - Generate formatted name for receipts and display.
+ * Rules:
+ * - Same last name: "John and Jane Smith"
+ * - Different last names: "John Smith and Jane Doe"
+ * - Single member: "John Smith"
+ */
+function getHouseholdDisplayName(members) {
+  if (!members || members.length === 0) return "Unknown";
+  
+  if (members.length === 1) {
+    return `${members[0].first_name} ${members[0].last_name}`;
+  }
+  
+  // Check if all members share the same last name
+  const lastNames = members.map(m => m.last_name);
+  const allSameLastName = lastNames.every(ln => ln === lastNames[0]);
+  
+  if (allSameLastName) {
+    // "John and Jane Smith"
+    const firstNames = members.map(m => m.first_name).join(' and ');
+    return `${firstNames} ${lastNames[0]}`;
+  } else {
+    // "John Smith and Jane Doe"
+    const fullNames = members.map(m => `${m.first_name} ${m.last_name}`);
+    return fullNames.join(' and ');
+  }
+}
+
+/**
+ * saveHousehold - Creates a new household with members.
+ * Payload: { household_name, address: {street, city, state, zip}, members: [{first_name, last_name, email, phone}] }
+ */
+function saveHousehold(payload) {
+  const ss = getDatasource();
+  if (!ss) throw new Error("Database not connected.");
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    throw new Error('Could not obtain lock. Try again.');
+  }
+
+  try {
+    const householdsSheet = ss.getSheetByName('db_Households');
+    const membersSheet = ss.getSheetByName('db_HouseholdMembers');
+    
+    if (!householdsSheet || !membersSheet) {
+      throw new Error('Required sheets not found. Run setupDatabase() first.');
+    }
+
+    const household_id = Utilities.getUuid();
+    
+    // Build search_index from all member names
+    const memberNames = payload.members.map(m => `${m.last_name}, ${m.first_name}`).join(' | ');
+    const search_index = `${payload.household_name} | ${memberNames}`;
+    
+    // Save address as JSON
+    const address_json = JSON.stringify(payload.address || {});
+    
+    // Append household row
+    householdsSheet.appendRow([
+      household_id,
+      payload.household_name,
+      search_index,
+      address_json,
+      new Date().toISOString()
+    ]);
+    
+    // Append member rows
+    payload.members.forEach((member, index) => {
+      const member_id = Utilities.getUuid();
+      membersSheet.appendRow([
+        member_id,
+        household_id,
+        member.first_name,
+        member.last_name,
+        member.email || '',
+        member.phone || '',
+        index + 1, // member_order
+        new Date().toISOString()
+      ]);
+    });
+    
+    return { 
+      success: true, 
+      household_id: household_id, 
+      household_name: payload.household_name 
+    };
+
+  } catch (error) {
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
  * saveDonation - Appends a new donation record.
+ * Now uses household_id instead of donor_id.
  */
 function saveDonation(payload) {
   const ss = getDatasource();
@@ -165,10 +307,10 @@ function saveDonation(payload) {
       userAgent: 'WebClient'
     });
 
-    // Append row: txn_id | donor_id | project_id | date | amount_cents | method | meta_json
+    // Append row: txn_id | household_id | project_id | date | amount_cents | method | meta_json
     sheet.appendRow([
       txn_id,
-      payload.donor_id,
+      payload.household_id,
       payload.project_id,
       payload.date,
       payload.amount_cents,
@@ -177,56 +319,6 @@ function saveDonation(payload) {
     ]);
 
     return { success: true, txn_id: txn_id };
-
-  } catch (error) {
-    throw error;
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/**
- * saveDonor - Creates a new donor.
- */
-function saveDonor(payload) {
-  const ss = getDatasource();
-  if (!ss) throw new Error("Database not connected.");
-
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(5000);
-  } catch (e) {
-    throw new Error('Busy. Try again.');
-  }
-
-  try {
-    const sheet = ss.getSheetByName('db_Donors');
-    if (!sheet) throw new Error('db_Donors sheet not found');
-
-    const donor_id = Utilities.getUuid();
-    // Payload: firstName, lastName, email, phone, type
-    
-    // Construct search_index: "LastName, FirstName"
-    const search_index = `${payload.lastName}, ${payload.firstName}`;
-    
-    const json_data = JSON.stringify({
-      firstName: payload.firstName,
-      lastName: payload.lastName,
-      email: payload.email,
-      phone: payload.phone
-    });
-    
-    // Headers: donor_id | status | type | search_index | json_data | created_at
-    sheet.appendRow([
-      donor_id,
-      'Active',
-      payload.type || 'Individual',
-      search_index,
-      json_data,
-      new Date().toISOString()
-    ]);
-    
-    return { success: true, donor_id: donor_id, search_index: search_index };
 
   } catch (error) {
     throw error;

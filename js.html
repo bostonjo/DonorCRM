@@ -1,5 +1,5 @@
 <script>
-    let STATE = { donors: [], projects: [] };
+    let STATE = { households: [], projects: [] };
 
     window.onload = function () {
         document.getElementById('date').valueAsDate = new Date();
@@ -10,7 +10,7 @@
     };
 
     function initApp(data) {
-        STATE.donors = data.donors;
+        STATE.households = data.households;
         STATE.projects = data.projects;
 
         // Populate Projects Dropdown
@@ -23,7 +23,7 @@
         });
 
         initAutocomplete();
-        renderDonorsTable();
+        renderHouseholdsTable();
     }
 
     // --- NAVIGATION ---
@@ -40,109 +40,251 @@
         }
     }
 
-    // --- DONOR MANAGEMENT ---
-    function renderDonorsTable() {
-        const tbody = document.getElementById('donors-table-body');
+    // --- HOUSEHOLD NAME FORMATTING ---
+    function formatHouseholdName(members) {
+        if (!members || members.length === 0) return "Unknown";
+
+        if (members.length === 1) {
+            return `${members[0].first_name} ${members[0].last_name}`;
+        }
+
+        // Check if all members share the same last name
+        const lastNames = members.map(m => m.last_name);
+        const allSameLastName = lastNames.every(ln => ln === lastNames[0]);
+
+        if (allSameLastName) {
+            // "John and Jane Smith"
+            const firstNames = members.map(m => m.first_name).join(' and ');
+            return `${firstNames} ${lastNames[0]}`;
+        } else {
+            // "John Smith and Jane Doe"
+            const fullNames = members.map(m => `${m.first_name} ${m.last_name}`);
+            return fullNames.join(' and ');
+        }
+    }
+
+    // --- HOUSEHOLD MANAGEMENT ---
+    function renderHouseholdsTable() {
+        const tbody = document.getElementById('households-table-body');
         tbody.innerHTML = '';
 
-        // Sort by name (search_index)
-        const sorted = [...STATE.donors].sort((a, b) => (a.search_index || '').localeCompare(b.search_index || ''));
+        // Sort by household name
+        const sorted = [...STATE.households].sort((a, b) =>
+            (a.household_name || '').localeCompare(b.household_name || '')
+        );
 
-        sorted.forEach(d => {
+        sorted.forEach(h => {
+            const displayName = formatHouseholdName(h.members);
+            const emails = h.members.map(m => m.email).filter(e => e).join(', ');
+            const phones = h.members.map(m => m.phone).filter(p => p).join(', ');
+            const address = h.address ?
+                `${h.address.street || ''}, ${h.address.city || ''}, ${h.address.state || ''} ${h.address.zip || ''}`.replace(/^[,\s]+|[,\s]+$/g, '')
+                : '';
+
             const tr = document.createElement('tr');
             tr.innerHTML = `
-        <td>${d.search_index || 'Unknown'}</td>
-        <td>${d.email || ''}</td>
-        <td>${d.phone || ''}</td>
-        <td><span class="badge bg-info text-dark">${d.type || 'Individual'}</span></td>
-        <td><span class="badge bg-success">Active</span></td>
-      `;
+                <td>
+                    <strong>${h.household_name}</strong><br>
+                    <small class="text-muted">${displayName}</small>
+                </td>
+                <td>${emails || '<span class="text-muted">—</span>'}</td>
+                <td>${phones || '<span class="text-muted">—</span>'}</td>
+                <td>${address || '<span class="text-muted">—</span>'}</td>
+            `;
             tbody.appendChild(tr);
         });
     }
 
-    function submitDonor() {
-        const btn = document.getElementById('btn-save-donor');
+    // Dynamic member input management
+    let memberCount = 1;
+
+    function addMemberInput() {
+        memberCount++;
+        const container = document.getElementById('members-container');
+        const memberDiv = document.createElement('div');
+        memberDiv.className = 'member-input-group p-3 mb-3 border rounded bg-light';
+        memberDiv.id = `member-${memberCount}`;
+
+        memberDiv.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Member ${memberCount}</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeMemberInput(${memberCount})">
+                    Remove
+                </button>
+            </div>
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <input type="text" class="form-control" id="m${memberCount}-first" placeholder="First Name" required>
+                </div>
+                <div class="col-md-6">
+                    <input type="text" class="form-control" id="m${memberCount}-last" placeholder="Last Name" required>
+                </div>
+                <div class="col-md-6">
+                    <input type="email" class="form-control" id="m${memberCount}-email" placeholder="Email (optional)">
+                </div>
+                <div class="col-md-6">
+                    <input type="tel" class="form-control" id="m${memberCount}-phone" placeholder="Phone (optional)">
+                </div>
+            </div>
+        `;
+
+        container.appendChild(memberDiv);
+    }
+
+    function removeMemberInput(id) {
+        const element = document.getElementById(`member-${id}`);
+        if (element) {
+            element.remove();
+        }
+    }
+
+    function submitHousehold() {
+        const btn = document.getElementById('btn-save-household');
         const originalText = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Saving...';
 
-        const payload = {
-            firstName: document.getElementById('d-first').value,
-            lastName: document.getElementById('d-last').value,
-            email: document.getElementById('d-email').value,
-            phone: document.getElementById('d-phone').value,
-            type: document.getElementById('d-type').value
+        // Collect household info
+        const household_name = document.getElementById('h-name').value;
+        const address = {
+            street: document.getElementById('h-street').value,
+            city: document.getElementById('h-city').value,
+            state: document.getElementById('h-state').value,
+            zip: document.getElementById('h-zip').value
         };
 
-        if (!payload.firstName || !payload.lastName) {
-            alert("First and Last Name are required.");
+        // Collect all members
+        const members = [];
+        for (let i = 1; i <= memberCount; i++) {
+            const firstInput = document.getElementById(`m${i}-first`);
+            if (!firstInput) continue; // Skipped if removed
+
+            const first_name = firstInput.value;
+            const last_name = document.getElementById(`m${i}-last`).value;
+            const email = document.getElementById(`m${i}-email`).value;
+            const phone = document.getElementById(`m${i}-phone`).value;
+
+            if (!first_name || !last_name) {
+                alert(`Member ${i}: First and Last Name are required.`);
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
+            members.push({ first_name, last_name, email, phone });
+        }
+
+        if (members.length === 0) {
+            alert("At least one household member is required.");
             btn.disabled = false;
             btn.textContent = originalText;
             return;
         }
 
+        if (!household_name) {
+            alert("Household name is required.");
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+
+        const payload = { household_name, address, members };
+
         google.script.run
             .withSuccessHandler((res) => {
                 // Update Local State
-                STATE.donors.push({
-                    donor_id: res.donor_id,
-                    search_index: res.search_index,
-                    ...payload
+                STATE.households.push({
+                    household_id: res.household_id,
+                    household_name: res.household_name,
+                    address: address,
+                    members: members
                 });
 
                 // Refresh UI
-                renderDonorsTable();
+                renderHouseholdsTable();
 
                 // Close Modal
-                const modalEl = document.getElementById('addDonorModal');
+                const modalEl = document.getElementById('addHouseholdModal');
                 const modal = bootstrap.Modal.getInstance(modalEl);
                 modal.hide();
 
                 // Reset Form
-                document.getElementById('add-donor-form').reset();
+                document.getElementById('add-household-form').reset();
+
+                // Reset members container to single member
+                document.getElementById('members-container').innerHTML = `
+                    <div class="member-input-group p-3 mb-3 border rounded bg-light" id="member-1">
+                        <h6 class="mb-2">Member 1</h6>
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <input type="text" class="form-control" id="m1-first" placeholder="First Name" required>
+                            </div>
+                            <div class="col-md-6">
+                                <input type="text" class="form-control" id="m1-last" placeholder="Last Name" required>
+                            </div>
+                            <div class="col-md-6">
+                                <input type="email" class="form-control" id="m1-email" placeholder="Email (optional)">
+                            </div>
+                            <div class="col-md-6">
+                                <input type="tel" class="form-control" id="m1-phone" placeholder="Phone (optional)">
+                            </div>
+                        </div>
+                    </div>
+                `;
+                memberCount = 1;
+
                 btn.disabled = false;
                 btn.textContent = originalText;
-                showAlert('success', 'Donor added successfully!');
+                showAlert('success', 'Household added successfully!');
             })
             .withFailureHandler((err) => {
                 btn.disabled = false;
                 btn.textContent = originalText;
                 alert('Error: ' + err.message);
             })
-            .saveDonor(payload);
+            .saveHousehold(payload);
     }
 
 
-    // --- DONATION FORM (Existing Logic) ---
+    // --- DONATION FORM ---
     function initAutocomplete() {
-        const input = document.getElementById('donor-search');
+        const input = document.getElementById('household-search');
         const resultsList = document.getElementById('results-list');
-        const hiddenId = document.getElementById('selected-donor-id');
-        const display = document.getElementById('selected-donor-display');
+        const hiddenId = document.getElementById('selected-household-id');
+        const membersDisplay = document.getElementById('selected-household-members');
 
         input.addEventListener('keyup', (e) => {
             const query = e.target.value.toLowerCase();
             resultsList.innerHTML = '';
             resultsList.classList.add('d-none');
+            membersDisplay.innerHTML = '';
 
             if (query.length < 2) return;
 
-            const matches = STATE.donors.filter(d =>
-                (d.search_index || '').toLowerCase().includes(query)
+            const matches = STATE.households.filter(h =>
+                (h.search_index || '').toLowerCase().includes(query)
             ).slice(0, 5);
 
             if (matches.length > 0) {
                 matches.forEach(match => {
                     const li = document.createElement('li');
                     li.className = 'list-group-item list-group-item-action cursor-pointer';
-                    li.textContent = match.search_index;
+                    li.innerHTML = `
+                        <strong>${match.household_name}</strong><br>
+                        <small class="text-muted">${formatHouseholdName(match.members)}</small>
+                    `;
 
                     li.onclick = () => {
-                        input.value = match.search_index;
-                        hiddenId.value = match.donor_id;
+                        input.value = match.household_name;
+                        hiddenId.value = match.household_id;
                         resultsList.classList.add('d-none');
                         input.classList.add('is-valid');
+
+                        // Display member info
+                        const memberInfo = match.members.map(m =>
+                            `${m.first_name} ${m.last_name}${m.email ? ` (${m.email})` : ''}`
+                        ).join('<br>');
+                        membersDisplay.innerHTML = `<small class="text-muted">${memberInfo}</small>`;
                     };
 
                     resultsList.appendChild(li);
@@ -164,21 +306,21 @@
         btn.disabled = true;
         btn.textContent = 'Saving...';
 
-        const donorId = document.getElementById('selected-donor-id').value;
+        const householdId = document.getElementById('selected-household-id').value;
         const project = document.getElementById('project').value;
         const amount = parseFloat(document.getElementById('amount').value);
         const date = document.getElementById('date').value;
         const method = document.getElementById('method').value;
 
-        if (!donorId) {
-            alert('Please select a donor from the search list.');
+        if (!householdId) {
+            alert('Please select a household from the search list.');
             btn.disabled = false;
             btn.textContent = originalText;
             return;
         }
 
         const payload = {
-            donor_id: donorId,
+            household_id: householdId,
             project_id: project,
             amount_cents: Math.round(amount * 100),
             date: date,
@@ -191,8 +333,9 @@
                 btn.textContent = originalText;
                 showAlert('success', 'Donation saved successfully! ID: ' + res.txn_id);
                 document.getElementById('donation-form').reset();
-                document.getElementById('selected-donor-id').value = '';
-                document.getElementById('donor-search').classList.remove('is-valid');
+                document.getElementById('selected-household-id').value = '';
+                document.getElementById('household-search').classList.remove('is-valid');
+                document.getElementById('selected-household-members').innerHTML = '';
                 document.getElementById('date').valueAsDate = new Date();
             })
             .withFailureHandler((err) => {
