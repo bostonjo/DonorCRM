@@ -163,11 +163,12 @@
         setupPhoneFormatter(document.getElementById('m1-phone'));
         setupEmailValidation(document.getElementById('m1-email'));
 
-        // Reset form when modal opens
-        const modal = document.getElementById('addHouseholdModal');
-        if (modal) {
-            modal.addEventListener('show.bs.modal', resetAddHouseholdModal);
-        }
+    }
+
+    function openAddHouseholdModal() {
+        resetAddHouseholdModal();
+        const modal = new bootstrap.Modal(document.getElementById('addHouseholdModal'));
+        modal.show();
     }
 
     function attachNameListeners(id) {
