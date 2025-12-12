@@ -138,12 +138,19 @@
     // --- NAVIGATION ---
     // --- NAVIGATION ---
     window.switchView = function (viewId, linkElement) {
-        // Hide all views
+        // 1. Hide all views
         document.querySelectorAll('.view-section').forEach(el => el.classList.add('d-none'));
-        // Show target
-        document.getElementById(viewId).classList.remove('d-none');
 
-        // Update Sidebar Active State
+        // 2. Show target
+        const target = document.getElementById(viewId);
+        if (target) {
+            target.classList.remove('d-none');
+        } else {
+            console.error(`View with ID '${viewId}' not found.`);
+            return;
+        }
+
+        // 3. Update Sidebar Active State
         if (linkElement) {
             document.querySelectorAll('.list-group-item').forEach(el => {
                 el.classList.remove('active', 'text-white');
@@ -152,6 +159,12 @@
             linkElement.classList.remove('text-white-50');
             linkElement.classList.add('active', 'text-white');
         }
+
+        // 4. Trigger specific renders if needed
+        if (viewId === 'view-households') renderHouseholdsDirectory();
+        if (viewId === 'view-projects') renderProjectsDirectory();
+        if (viewId === 'view-donations') renderDonationsTable();
+        if (viewId === 'view-dashboard') renderDashboard();
     }
 
     // Drill-down from Dashboard
