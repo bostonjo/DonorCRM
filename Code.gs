@@ -501,13 +501,7 @@ function saveDonation(payload) {
   } finally {
     lock.releaseLock();
   }
-    return { success: true, txn_id: txn_id };
 
-  } catch (error) {
-    throw error;
-  } finally {
-    lock.releaseLock();
-  }
 }
 
 // --- PROJECT MANAGEMENT ---
