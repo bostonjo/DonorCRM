@@ -38,6 +38,11 @@
           onclick="switchView('view-projects', this)">
           <i class="bi bi-folder me-2"></i> Projects
         </button>
+        <button id="nav-export" type="button"
+          class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
+          onclick="switchView('view-export', this)">
+          <i class="bi bi-file-earmark-arrow-down me-2"></i> Export
+        </button>
       </div>
     </div>
 
@@ -51,13 +56,19 @@
         <div class="d-flex justify-content-between align-items-center mb-4">
           <h2 class="mb-0">Analytics Dashboard</h2>
           <div class="d-flex gap-2 align-items-center">
-            <select class="form-select form-select-sm" id="filter-year-start" onchange="renderDashboard()">
+            <select class="form-select form-select-sm" id="filter-year-mode"
+              onchange="handleYearModeChange('dashboard')" style="min-width: 120px; font-weight: bold;">
               <!-- JS populated -->
             </select>
-            <span class="text-muted">-</span>
-            <select class="form-select form-select-sm" id="filter-year-end" onchange="renderDashboard()">
-              <!-- JS populated -->
-            </select>
+            <div id="dashboard-custom-range" class="d-none d-flex gap-2 align-items-center">
+              <select class="form-select form-select-sm" id="filter-year-start" onchange="renderDashboard()">
+                <!-- JS populated -->
+              </select>
+              <span class="text-muted">-</span>
+              <select class="form-select form-select-sm" id="filter-year-end" onchange="renderDashboard()">
+                <!-- JS populated -->
+              </select>
+            </div>
           </div>
         </div>
 
@@ -183,21 +194,32 @@
               <div class="col-md-4"> <!-- Expanded width for date range -->
                 <label class="form-label small fw-bold">Year Range</label>
                 <div class="d-flex gap-2 align-items-center">
-                  <select class="form-select form-select-sm" id="dm-filter-year-start"
-                    onchange="renderDonationsTable()">
-                    <!-- JS -->
+                  <select class="form-select form-select-sm" id="dm-filter-year-mode"
+                    onchange="handleYearModeChange('donations')" style="min-width: 120px; font-weight: bold;">
+                    <!-- JS populated -->
                   </select>
-                  <span class="text-muted">-</span>
-                  <select class="form-select form-select-sm" id="dm-filter-year-end" onchange="renderDonationsTable()">
-                    <!-- JS -->
-                  </select>
+                  <div id="donations-custom-range" class="d-none d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" id="dm-filter-year-start"
+                      onchange="renderDonationsTable()">
+                      <!-- JS -->
+                    </select>
+                    <span class="text-muted">-</span>
+                    <select class="form-select form-select-sm" id="dm-filter-year-end"
+                      onchange="renderDonationsTable()">
+                      <!-- JS -->
+                    </select>
+                  </div>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label small fw-bold">Household</label>
-                <select class="form-select form-select-sm" id="dm-filter-household" onchange="renderDonationsTable()">
-                  <option value="All">All Households</option>
-                </select>
+                <div class="position-relative">
+                  <input type="text" class="form-control form-control-sm" id="dm-filter-household-search"
+                    placeholder="Type to search..." autocomplete="off">
+                  <input type="hidden" id="dm-filter-household" value="All">
+                  <ul id="dm-filter-household-results" class="list-group position-absolute w-100 d-none"
+                    style="z-index: 1050; max-height: 200px; overflow-y: auto;"></ul>
+                </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label small fw-bold">Method</label>
@@ -340,6 +362,119 @@
         </div>
       </div>
       <!-- /#view-projects -->
+
+      <!-- VIEW: EXPORT -->
+      <div id="view-export" class="view-section d-none">
+        <h2 class="mb-4">Data Export</h2>
+
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-bold">Export Configuration</div>
+          <div class="card-body">
+
+            <!-- Filters -->
+            <h5 class="card-title mb-3">1. Filter Data</h5>
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Year Range (Applies to Donations)</label>
+                <div class="d-flex gap-2 align-items-center">
+                  <select class="form-select form-select-sm" id="export-filter-year-mode"
+                    onchange="handleYearModeChange('export'); updateExportPreview()"
+                    style="min-width: 120px; font-weight: bold;">
+                    <!-- JS populated -->
+                  </select>
+                  <div id="export-custom-range" class="d-none d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" id="export-filter-year-start"
+                      onchange="updateExportPreview()"> <!-- JS --> </select>
+                    <span class="text-muted">-</span>
+                    <select class="form-select form-select-sm" id="export-filter-year-end"
+                      onchange="updateExportPreview()"> <!-- JS --> </select>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Household</label>
+                <div class="position-relative">
+                  <input type="text" class="form-control form-control-sm" id="export-filter-household-search"
+                    placeholder="Type to search..." autocomplete="off">
+                  <input type="hidden" id="export-filter-household" value="All" onchange="updateExportPreview()">
+                  <ul id="export-filter-household-results" class="list-group position-absolute w-100 d-none"
+                    style="z-index: 1050; max-height: 200px; overflow-y: auto;"></ul>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Method</label>
+                <select class="form-select form-select-sm" id="export-filter-method" onchange="updateExportPreview()">
+                  <option value="All">All Methods</option>
+                  <option value="Check">Check</option>
+                  <option value="Venmo">Venmo</option>
+                  <option value="PayPal">PayPal</option>
+                  <option value="Cash">Cash</option>
+                  <option value="DAF/Family Gift/QCD">DAF/Family Gift/QCD</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+            </div>
+
+            <hr>
+
+            <!-- Selection -->
+            <h5 class="card-title mb-3">2. Select Records to Export</h5>
+            <div class="row g-3 mb-4">
+              <div class="col-12">
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="exportRecordType" id="radio-export-donations"
+                    value="donations" checked onchange="updateExportPreview()">
+                  <label class="form-check-label" for="radio-export-donations">Donations</label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="exportRecordType" id="radio-export-households"
+                    value="households" onchange="updateExportPreview()">
+                  <label class="form-check-label" for="radio-export-households">Households (Donors)</label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="exportRecordType" id="radio-export-projects"
+                    value="projects" onchange="updateExportPreview()">
+                  <label class="form-check-label" for="radio-export-projects">Projects</label>
+                </div>
+              </div>
+            </div>
+
+            <hr>
+
+            <!-- Preview Section -->
+            <h5 class="card-title mb-3">3. Preview Data</h5>
+            <div id="export-preview-container">
+              <div class="d-flex gap-3 mb-3">
+                <span class="badge bg-primary fs-6" id="preview-count-records">0 Records</span>
+                <span class="badge bg-success fs-6" id="preview-total-donated">Total: $0.00</span>
+              </div>
+
+              <div class="table-responsive border rounded" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm table-striped mb-0 small">
+                  <thead class="table-light sticky-top">
+                    <tr id="preview-table-headers">
+                      <!-- JS populated -->
+                    </tr>
+                  </thead>
+                  <tbody id="export-preview-body">
+                    <!-- JS populated -->
+                  </tbody>
+                </table>
+              </div>
+              <div class="form-text mt-1 text-end" id="preview-footer">Showing top 10 rows</div>
+            </div>
+
+            <hr>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+              <button class="btn btn-primary" type="button" onclick="exportToCSV()">
+                <i class="bi bi-download me-2"></i> Export Selected to CSV
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div>
 
     </div>
     <!-- /#page-content-wrapper -->

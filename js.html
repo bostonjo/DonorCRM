@@ -83,47 +83,93 @@
     }
 
     function renderFilters() {
-        // Initialize Year Range Selects (Dashboard & Donations)
-        const selects = [
+        // 1. Determine Years present in data
+        const years = [...new Set(STATE.donations.map(d => new Date(d.date).getFullYear()))].sort((a, b) => b - a); // Descending (Newest first)
+        const currentYear = new Date().getFullYear();
+        if (!years.includes(currentYear)) years.unshift(currentYear);
+
+        // Ensure Min/Max for All Time
+        const sortAsc = [...years].sort((a, b) => a - b);
+        const minYear = sortAsc[0];
+        const maxYear = sortAsc[sortAsc.length - 1];
+
+        // 2. Initialize Hidden Range Selects (Source of Truth)
+        const rangeSelects = [
             document.getElementById('filter-year-start'),
             document.getElementById('filter-year-end'),
             document.getElementById('dm-filter-year-start'),
-            document.getElementById('dm-filter-year-end')
+            document.getElementById('dm-filter-year-end'),
+            document.getElementById('export-filter-year-start'),
+            document.getElementById('export-filter-year-end')
         ];
 
-        const years = [...new Set(STATE.donations.map(d => new Date(d.date).getFullYear()))].sort(); // Ascending
-        if (years.length === 0) {
-            const y = new Date().getFullYear();
-            years.push(y);
-        }
-
-        const minYear = years[0];
-        const maxYear = new Date().getFullYear(); // Ensure current year is always available even if no donations
-        if (!years.includes(maxYear)) years.push(maxYear);
-        years.sort((a, b) => a - b);
-
-        selects.forEach(sel => {
+        rangeSelects.forEach(sel => {
             if (!sel) return;
-            const currentVal = sel.value;
+            // Preserve value if possible
+            const oldVal = sel.value;
             sel.innerHTML = '';
-
-            years.forEach(y => {
+            sortAsc.forEach(y => {
                 const opt = document.createElement('option');
                 opt.value = y;
                 opt.textContent = y;
                 sel.appendChild(opt);
             });
+            // Default logic if no value
+            if (sel.id.includes('start')) sel.value = oldVal || minYear;
+            if (sel.id.includes('end')) sel.value = oldVal || maxYear;
+        });
 
-            // Restore or Default
-            if (currentVal && years.includes(parseInt(currentVal))) {
-                sel.value = currentVal;
+        // 3. Initialize "Mode" Selects
+        const modeSelects = [
+            { id: 'filter-year-mode', context: 'dashboard' },
+            { id: 'dm-filter-year-mode', context: 'donations' },
+            { id: 'export-filter-year-mode', context: 'export' }
+        ];
+
+        modeSelects.forEach(cfg => {
+            const sel = document.getElementById(cfg.id);
+            if (!sel) return;
+
+            const existingVal = sel.value; // Preserve selection on re-render
+            sel.innerHTML = '';
+
+            // Options: Years, All Time, Custom
+            years.forEach(y => {
+                const opt = document.createElement('option');
+                opt.value = y;
+                opt.textContent = y; // "2024"
+                sel.appendChild(opt);
+            });
+
+            // Separator
+            const sep = document.createElement('option');
+            sep.disabled = true;
+            sep.textContent = '──────────';
+            sel.appendChild(sep);
+
+            // All Time
+            const optAll = document.createElement('option');
+            optAll.value = 'ALL';
+            optAll.textContent = 'All Time';
+            sel.appendChild(optAll);
+
+            // Custom
+            const optCustom = document.createElement('option');
+            optCustom.value = 'CUSTOM';
+            optCustom.textContent = 'Custom Range...';
+            sel.appendChild(optCustom);
+
+            // Apply Default: Current Year (first in desc list)
+            if (existingVal && (years.includes(parseInt(existingVal)) || existingVal === 'ALL' || existingVal === 'CUSTOM')) {
+                sel.value = existingVal;
             } else {
-                // Default logic: 
-                // Start years -> minYear
-                // End years -> maxYear
-                if (sel.id.includes('start')) sel.value = minYear;
-                if (sel.id.includes('end')) sel.value = maxYear;
+                sel.value = currentYear.toString();
+                // If data doesn't have current year, it might be empty, but we added it to list.
+                // So defaulting to top of list is safe.
             }
+
+            // Trigger Change to sync hidden fields
+            handleYearModeChange(cfg.context, true); // true = suppressRender to avoid double render on init
         });
 
         // Populate Filter Projects (Dashboard)
@@ -141,24 +187,80 @@
             if (filterProject.value !== currentProj) filterProject.value = 'All';
         }
 
-        // Populate Donation Management Household Filter
-        const dmHouseholdSelect = document.getElementById('dm-filter-household');
-        if (dmHouseholdSelect) {
-            const currentH = dmHouseholdSelect.value;
-            dmHouseholdSelect.innerHTML = '<option value="All">All Households</option>';
-            const sortedHouseholds = [...STATE.households].sort((a, b) => (a.household_name || '').localeCompare(b.household_name || ''));
-            sortedHouseholds.forEach(h => {
-                const opt = document.createElement('option');
-                opt.value = h.household_id;
-                opt.textContent = h.household_name;
-                dmHouseholdSelect.appendChild(opt);
-            });
-            dmHouseholdSelect.value = currentH;
-            if (dmHouseholdSelect.value !== currentH) dmHouseholdSelect.value = 'All';
+        // Populate Donation Management Household Filter - MOVED to Autocomplete logic (No longer select)
+        // Check if we need to do anything here for the input?
+        // Since it's an input with autocomplete, we rely on the user typing.
+        // We do not prepopulate options.
+
+    }
+
+    function handleYearModeChange(context, suppressRender = false) {
+        let modeId, rangeDivId, startId, endId;
+
+        if (context === 'dashboard') {
+            modeId = 'filter-year-mode';
+            rangeDivId = 'dashboard-custom-range';
+            startId = 'filter-year-start';
+            endId = 'filter-year-end';
+        } else if (context === 'donations') {
+            modeId = 'dm-filter-year-mode';
+            rangeDivId = 'donations-custom-range';
+            startId = 'dm-filter-year-start';
+            endId = 'dm-filter-year-end';
+        } else if (context === 'export') {
+            modeId = 'export-filter-year-mode';
+            rangeDivId = 'export-custom-range';
+            startId = 'export-filter-year-start';
+            endId = 'export-filter-year-end';
+        }
+
+        const modeSel = document.getElementById(modeId);
+        const rangeDiv = document.getElementById(rangeDivId);
+        const startSel = document.getElementById(startId);
+        const endSel = document.getElementById(endId);
+
+        if (!modeSel || !rangeDiv || !startSel || !endSel) return;
+
+        const val = modeSel.value;
+
+        if (val === 'CUSTOM') {
+            rangeDiv.classList.remove('d-none');
+            // Do not touch start/end values, let user edit them
+        } else {
+            rangeDiv.classList.add('d-none');
+
+            if (val === 'ALL') {
+                // Set to min/max available in the options
+                if (startSel.options.length > 0) {
+                    startSel.value = startSel.options[0].value; // Sorted Ascending in init
+                    endSel.value = endSel.options[endSel.options.length - 1].value;
+                }
+            } else {
+                // Single Year (e.g. "2024")
+                // Set both start and end to this year
+                startSel.value = val;
+                endSel.value = val;
+            }
+        }
+
+        if (!suppressRender) {
+            if (context === 'dashboard') renderDashboard();
+            if (context === 'donations') renderDonationsTable();
         }
     }
 
     // --- UTILS ---
+    function formatDateUS(isoDateString) {
+        if (!isoDateString) return '';
+        const d = new Date(isoDateString);
+        if (isNaN(d.getTime())) return isoDateString; // Validation fallback
+        return d.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+    }
+
     function escapeHtml(text) {
         if (!text) return '';
         return String(text)
@@ -202,6 +304,7 @@
         if (viewId === 'view-projects') renderProjectsDirectory();
         if (viewId === 'view-donations') renderDonationsTable();
         if (viewId === 'view-dashboard') renderDashboard();
+        if (viewId === 'view-export') updateExportPreview();
     }
 
     // Drill-down from Dashboard
@@ -1209,22 +1312,42 @@
 
 
     // --- DONATION FORM ---
-    function initAutocomplete() {
-        const input = document.getElementById('household-search');
-        const resultsList = document.getElementById('results-list');
-        const hiddenId = document.getElementById('selected-household-id');
-        const membersDisplay = document.getElementById('selected-household-members');
+    function setupHouseholdAutocomplete(config) {
+        // config: { inputId, resultsId, hiddenId, membersId (optional), onSelect (optional), defaultText (optional) }
+        const input = document.getElementById(config.inputId);
+        const resultsList = document.getElementById(config.resultsId);
+        const hiddenId = document.getElementById(config.hiddenId);
+        const membersDisplay = config.membersId ? document.getElementById(config.membersId) : null;
 
-        input.addEventListener('keyup', (e) => {
+        if (!input || !resultsList || !hiddenId) return;
+
+        // Helper to clear selection
+        const clearSelection = () => {
+            hiddenId.value = 'All'; // Default for filters
+            if (config.membersId && membersDisplay) membersDisplay.innerHTML = '';
+        };
+
+        input.addEventListener('input', (e) => {
             const query = e.target.value.toLowerCase();
+
+            // If empty, reset (mainly for filters)
+            if (query.trim() === '') {
+                clearSelection();
+                if (config.onSelect) config.onSelect(null);
+                resultsList.classList.add('d-none');
+                return;
+            }
+
             resultsList.innerHTML = '';
             resultsList.classList.add('d-none');
-            membersDisplay.innerHTML = '';
+            if (membersDisplay) membersDisplay.innerHTML = '';
 
             if (query.length < 2) return;
 
+            // Search logic
             const matches = STATE.households.filter(h =>
-                (h.search_index || '').toLowerCase().includes(query)
+                (h.search_index || '').toLowerCase().includes(query) ||
+                (h.household_name || '').toLowerCase().includes(query)
             ).slice(0, 5);
 
             if (matches.length > 0) {
@@ -1232,21 +1355,26 @@
                     const li = document.createElement('li');
                     li.className = 'list-group-item list-group-item-action cursor-pointer';
                     li.innerHTML = `
-                        <strong>${match.household_name}</strong><br>
-                        <small class="text-muted">${formatHouseholdName(match.members)}</small>
+                        <strong>${escapeHtml(match.household_name)}</strong><br>
+                        <small class="text-muted">${escapeHtml(formatHouseholdName(match.members))}</small>
                     `;
 
-                    li.onclick = () => {
-                        input.value = match.household_name;
+                    li.onclick = (ev) => {
+                        ev.stopPropagation(); // Prevent document click handler
+                        input.value = match.household_name; // Keep name in input
                         hiddenId.value = match.household_id;
                         resultsList.classList.add('d-none');
                         input.classList.add('is-valid');
 
-                        // Display member info
-                        const memberInfo = match.members.map(m =>
-                            `${m.first_name} ${m.last_name}${m.email ? ` (${m.email})` : ''}`
-                        ).join('<br>');
-                        membersDisplay.innerHTML = `<small class="text-muted">${memberInfo}</small>`;
+                        // Display member info if requested
+                        if (membersDisplay) {
+                            const memberInfo = match.members.map(m =>
+                                `${escapeHtml(m.first_name)} ${escapeHtml(m.last_name)}${m.email ? ` (${escapeHtml(m.email)})` : ''}`
+                            ).join('<br>');
+                            membersDisplay.innerHTML = `<small class="text-muted">${memberInfo}</small>`;
+                        }
+
+                        if (config.onSelect) config.onSelect(match);
                     };
 
                     resultsList.appendChild(li);
@@ -1255,11 +1383,180 @@
             }
         });
 
+        // Search on Focus (optional, maybe too noisy?)
+        // input.addEventListener('focus', () => { ... });
+
+        // Close on click outside
         document.addEventListener('click', (e) => {
-            if (e.target !== input && e.target !== resultsList) {
+            if (e.target !== input && e.target !== resultsList && !resultsList.contains(e.target)) {
                 resultsList.classList.add('d-none');
+
+                // If input has text but no ID is selected (user typed garbage), revert or clear?
+                // For filters: explicit clear is better.
+                // For Data Entry: we might want to leave it? 
+                // Let's rely on hiddenId. If hiddenId is empty/All and text is present but not selected...
+                // Ideally we force selection.
+                const currentId = hiddenId.value;
+                if (currentId === 'All' || currentId === '') {
+                    // If they typed something but didn't select, and it's not a valid exact match...
+                    // Maybe just leave it alone for now, user handles it.
+                }
             }
         });
+    }
+
+    function initAutocomplete() {
+        // 1. Donation Modal Autocomplete
+        setupHouseholdAutocomplete({
+            inputId: 'household-search',
+            resultsId: 'results-list',
+            hiddenId: 'selected-household-id',
+            membersId: 'selected-household-members',
+            onSelect: null // No special action
+        });
+
+        // 2. Donation Filter Autocomplete
+        setupHouseholdAutocomplete({
+            inputId: 'dm-filter-household-search',
+            resultsId: 'dm-filter-household-results',
+            hiddenId: 'dm-filter-household',
+            onSelect: () => renderDonationsTable()
+        });
+
+        // 3. Export Filter Autocomplete (Will look for elements, safe if missing)
+        setupHouseholdAutocomplete({
+            inputId: 'export-filter-household-search',
+            resultsId: 'export-filter-household-results',
+            hiddenId: 'export-filter-household',
+            onSelect: () => updateExportPreview() // Trigger preview update
+        });
+    }
+
+    function updateExportPreview() {
+        // 1. Get Filters
+        const startYear = parseInt(document.getElementById('export-filter-year-start').value);
+        const endYear = parseInt(document.getElementById('export-filter-year-end').value);
+        const householdFilter = document.getElementById('export-filter-household').value;
+        const methodFilter = document.getElementById('export-filter-method').value;
+
+        // 2. Identify Selection
+        let selectedType = 'donations';
+        if (document.getElementById('radio-export-households').checked) selectedType = 'households';
+        if (document.getElementById('radio-export-projects').checked) selectedType = 'projects';
+
+        // 3. Filter Data Logic
+        // Always filter donations first as it drives time/method logic
+        let filteredDonations = STATE.donations.filter(d => {
+            const year = new Date(d.date).getFullYear();
+            if (year < startYear || year > endYear) return false;
+            if (householdFilter !== 'All' && d.household_id !== householdFilter) return false;
+            if (methodFilter !== 'All' && d.method !== methodFilter) return false;
+            return true;
+        });
+
+        const relevantHouseholdIds = new Set(filteredDonations.map(d => d.household_id));
+        let filteredHouseholds = STATE.households.filter(h => {
+            if (householdFilter !== 'All') return h.household_id === householdFilter;
+            return relevantHouseholdIds.has(h.household_id);
+        });
+
+        // Projects (Keep All for now unless we implement deeper filtering)
+        const filteredProjects = STATE.projects;
+
+        // 4. Update Summaries & Total
+        const countBadge = document.getElementById('preview-count-records');
+        const totalBadge = document.getElementById('preview-total-donated');
+
+        let displayData = [];
+        let totalAmount = 0;
+        let recordLabel = 'Records';
+
+        if (selectedType === 'donations') {
+            displayData = filteredDonations;
+            recordLabel = 'Donations';
+            totalAmount = filteredDonations.reduce((sum, d) => sum + d.amount_cents, 0);
+            totalBadge.classList.remove('d-none');
+        } else if (selectedType === 'households') {
+            displayData = filteredHouseholds;
+            recordLabel = 'Households';
+            // Determine Total Donated for these households (in this period? or lifetime?)
+            // User likely expects the sum of the filtered donations if that's what drove the household list.
+            totalAmount = filteredDonations.reduce((sum, d) => sum + d.amount_cents, 0);
+            totalBadge.classList.remove('d-none');
+        } else {
+            // Projects
+            displayData = filteredProjects;
+            recordLabel = 'Projects';
+            totalBadge.classList.add('d-none');
+        }
+
+        countBadge.textContent = `${displayData.length} ${recordLabel}`;
+        totalBadge.textContent = `Total: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalAmount / 100)}`;
+
+        // 5. Render Table (Top 10)
+        const thead = document.getElementById('preview-table-headers');
+        const tbody = document.getElementById('export-preview-body');
+        thead.innerHTML = '';
+        tbody.innerHTML = '';
+
+        if (displayData.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No ${recordLabel.toLowerCase()} match filters.</td></tr>`;
+            document.getElementById('preview-footer').textContent = '';
+            return;
+        }
+
+        const previewLimit = 10;
+        const previewRows = displayData.slice(0, previewLimit);
+
+        if (selectedType === 'donations') {
+            thead.innerHTML = '<th>Date</th><th>Household</th><th>Amount</th><th>Method</th><th>Project</th>';
+            previewRows.forEach(d => {
+                const h = STATE.households.find(x => x.household_id === d.household_id);
+                const p = STATE.projects.find(x => x.project_id === d.project_id);
+                const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(d.amount_cents / 100);
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${formatDateUS(d.date)}</td>
+                    <td>${escapeHtml(h ? h.household_name : 'Unknown')}</td>
+                    <td>${amount}</td>
+                    <td>${escapeHtml(d.method)}</td>
+                    <td>${escapeHtml(p ? p.name : '')}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else if (selectedType === 'households') {
+            thead.innerHTML = '<th>Household Name</th><th>Members</th><th>City</th><th>State</th>';
+            previewRows.forEach(h => {
+                const members = h.members.map(m => `${m.first_name}`).join(', ');
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${escapeHtml(h.household_name)}</td>
+                    <td>${escapeHtml(members)}</td>
+                    <td>${escapeHtml(h.address?.city || '')}</td>
+                    <td>${escapeHtml(h.address?.state || '')}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            // Projects
+            thead.innerHTML = '<th>Project Name</th><th>Description</th>';
+            previewRows.forEach(p => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${escapeHtml(p.name)}</td>
+                    <td>${escapeHtml(p.description || '-')}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        const footer = document.getElementById('preview-footer');
+        if (displayData.length > previewLimit) {
+            footer.textContent = `Showing 10 of ${displayData.length} records`;
+        } else {
+            footer.textContent = `Showing ${displayData.length} records`;
+        }
     }
 
     function showAlert(type, message) {
@@ -1276,20 +1573,132 @@
         console.error(err);
         showAlert('danger', 'System Error: ' + err.message);
     }
-    // --- DONATION MANAGEMENT ---
+    // --- EXPORT FUNCTIONALITY ---
+    function exportToCSV() {
+        // 1. Get Filters
+        const startYear = parseInt(document.getElementById('export-filter-year-start').value);
+        const endYear = parseInt(document.getElementById('export-filter-year-end').value);
+        const householdFilter = document.getElementById('export-filter-household').value; // ID or "All"
+        const methodFilter = document.getElementById('export-filter-method').value;
+
+        // 2. Identify Selection (Single Select)
+        let selectedType = 'donations';
+        if (document.getElementById('radio-export-households').checked) selectedType = 'households';
+        if (document.getElementById('radio-export-projects').checked) selectedType = 'projects';
+
+        // 3. Filter Data
+        // Filter Donations first
+        let filteredDonations = STATE.donations.filter(d => {
+            const year = new Date(d.date).getFullYear();
+            return year >= startYear && year <= endYear;
+        });
+
+        if (householdFilter !== 'All') {
+            filteredDonations = filteredDonations.filter(d => d.household_id === householdFilter);
+        }
+
+        if (methodFilter !== 'All') {
+            filteredDonations = filteredDonations.filter(d => d.method === methodFilter);
+        }
+
+        // Households
+        const relevantHouseholdIds = new Set(filteredDonations.map(d => d.household_id));
+        let filteredHouseholds = STATE.households.filter(h => {
+            if (householdFilter !== 'All') return h.household_id === householdFilter;
+            return relevantHouseholdIds.has(h.household_id);
+        });
+
+        // Projects
+        const filteredProjects = STATE.projects;
+
+
+        // 4. Generate CSV (Single File)
+        if (selectedType === 'households') {
+            downloadCSV('Donors.csv', convertToCSV(filteredHouseholds, [
+                'household_id', 'household_name',
+                h => h.members.map(m => `${m.first_name} ${m.last_name}`).join('; '),
+                h => h.members.map(m => m.email).join('; '),
+                h => h.address ? `${h.address.street} ${h.address.street2 || ''} ${h.address.city} ${h.address.state} ${h.address.zip}` : '',
+                // Maybe detailed columns?
+                h => h.address?.street || '',
+                h => h.address?.city || '',
+                h => h.address?.state || '',
+                h => h.address?.zip || ''
+            ], ['ID', 'Household Name', 'Members', 'Emails', 'Full Address', 'Street', 'City', 'State', 'Zip']));
+        }
+        else if (selectedType === 'donations') {
+            downloadCSV('Donations.csv', convertToCSV(filteredDonations, [
+                'donation_id', 'date', 'amount_cents', 'method', 'household_id', 'project_id', 'comments',
+                d => (d.amount_cents / 100).toFixed(2), // Formatted Amount
+                d => {
+                    const h = STATE.households.find(x => x.household_id === d.household_id);
+                    return h ? h.household_name : 'Unknown';
+                },
+                d => {
+                    const p = STATE.projects.find(x => x.project_id === d.project_id);
+                    return p ? p.name : 'Unknown';
+                }
+            ], ['ID', 'Date', 'Cents', 'Method', 'Household ID', 'Project ID', 'Comments', 'Amount ($)', 'Household Name', 'Project Name']));
+        }
+        else if (selectedType === 'projects') {
+            downloadCSV('Projects.csv', convertToCSV(filteredProjects, [
+                'project_id', 'name', 'description'
+            ], ['ID', 'Name', 'Description']));
+        }
+    }
+
+    function convertToCSV(objArray, fields, headers) {
+        if (!objArray || objArray.length === 0) return '';
+
+        const escape = (val) => {
+            if (val === null || val === undefined) return '';
+            const str = String(val).replace(/"/g, '""'); // Escape double quotes
+            return `"${str}"`;
+        };
+
+        const headerRow = headers.map(escape).join(',');
+
+        const rows = objArray.map(obj => {
+            return fields.map(field => {
+                if (typeof field === 'function') {
+                    return escape(field(obj));
+                }
+                return escape(obj[field]);
+            }).join(',');
+        });
+
+        return [headerRow, ...rows].join('\n');
+    }
+
+    function downloadCSV(filename, csvContent) {
+        if (!csvContent) return;
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    }
+
 
     function resetDonationFilters() {
-        document.getElementById('dm-filter-year-end').value = new Date().getFullYear();
-        // Reset start year to min available? Or just match end? 
-        // Let's defer to renderFilters logic or just set to first option?
-        // Actually renderFilters set sensible defaults. Let's just re-call renderFilters or manually set.
-        // Easiest is to reload page? No.
-        // Let's start with "All Time" equivalent? The range selector forces a range.
-        // Set Start to Min, End to Max.
-        const startSel = document.getElementById('dm-filter-year-start');
-        const endSel = document.getElementById('dm-filter-year-end');
-        if (startSel.options.length > 0) startSel.selectedIndex = 0;
-        if (endSel.options.length > 0) endSel.selectedIndex = endSel.options.length - 1;
+        // Reset Year Mode to Current
+        const modeSel = document.getElementById('dm-filter-year-mode');
+        if (modeSel) {
+            const currentYear = new Date().getFullYear().toString();
+            // Check if current year is in list, else first option
+            if (Array.from(modeSel.options).some(o => o.value === currentYear)) {
+                modeSel.value = currentYear;
+            } else if (modeSel.options.length > 0) {
+                modeSel.value = modeSel.options[0].value;
+            }
+            handleYearModeChange('donations', true); // Sync hidden fields
+        }
 
         document.getElementById('dm-filter-household').value = 'All';
         document.getElementById('dm-filter-method').value = 'All';
@@ -1458,7 +1867,7 @@
                 const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'No Project';
                 return `
                                         <tr class="donation-row border-bottom" onclick="openDonationModal('${escapeHtml(d.txn_id)}')" style="cursor: pointer;">
-                                            <td style="width: 15%;" class="ps-4 text-muted">${escapeHtml(d.date.substring(0, 10))}</td>
+                                            <td style="width: 15%;" class="ps-4 text-muted">${escapeHtml(formatDateUS(d.date))}</td>
                                             <td style="width: 15%;" class="text-muted"></td> <!-- Household name in header -->
                                             <td style="width: 15%;" class="fw-bold text-success">${formatMoney(d.amount_cents)}</td>
                                             <td style="width: 25%;">
