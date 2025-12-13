@@ -18,22 +18,26 @@
     <!-- Sidebar -->
     <div class="bg-dark text-white p-3" id="sidebar-wrapper" style="min-width: 250px; min-height: 100vh;">
       <div class="list-group list-group-flush">
-        <a href="javascript:void(0)" class="list-group-item list-group-item-action bg-transparent text-white p-3 active"
+        <button id="nav-dashboard" type="button"
+          class="list-group-item list-group-item-action bg-transparent text-white p-3 active"
           onclick="switchView('view-dashboard', this)">
           <i class="bi bi-speedometer2 me-2"></i> Dashboard
-        </a>
-        <a href="javascript:void(0)" class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
+        </button>
+        <button id="nav-donations" type="button"
+          class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
           onclick="switchView('view-donations', this)">
           <i class="bi bi-wallet2 me-2"></i> Donations
-        </a>
-        <a href="javascript:void(0)" class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
+        </button>
+        <button id="nav-households" type="button"
+          class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
           onclick="switchView('view-households', this)">
           <i class="bi bi-people me-2"></i> Households
-        </a>
-        <a href="javascript:void(0)" class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
+        </button>
+        <button id="nav-projects" type="button"
+          class="list-group-item list-group-item-action bg-transparent text-white-50 p-3"
           onclick="switchView('view-projects', this)">
           <i class="bi bi-folder me-2"></i> Projects
-        </a>
+        </button>
       </div>
     </div>
 
@@ -75,6 +79,7 @@
                   <option value="Venmo">Venmo</option>
                   <option value="PayPal">PayPal</option>
                   <option value="Cash">Cash</option>
+                  <option value="DAF/Family Gift/QCD">DAF/Family Gift/QCD</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
@@ -202,6 +207,7 @@
                   <option value="Venmo">Venmo</option>
                   <option value="PayPal">PayPal</option>
                   <option value="Cash">Cash</option>
+                  <option value="DAF/Family Gift/QCD">DAF/Family Gift/QCD</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
@@ -238,93 +244,97 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+      <!-- /#view-donations -->
 
+      <!-- MODAL: Add/Edit Donation -->
+      <div class="modal fade" id="donationModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="donationModalLabel">Log New Donation</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <form id="donation-form" onsubmit="event.preventDefault(); submitDonation();">
+                <input type="hidden" id="donation-txn-id"> <!-- Hidden ID for updates -->
 
-            <!-- MODAL: Add/Edit Donation -->
-            <div class="modal fade" id="donationModal" tabindex="-1" aria-hidden="true">
-              <div class="modal-dialog">
-                <div class="modal-content">
-                  <div class="modal-header">
-                    <h5 class="modal-title" id="donationModalLabel">Log New Donation</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                  </div>
-                  <div class="modal-body">
-                    <form id="donation-form" onsubmit="event.preventDefault(); submitDonation();">
-                      <input type="hidden" id="donation-txn-id"> <!-- Hidden ID for updates -->
-
-                      <div class="mb-3 position-relative">
-                        <label class="form-label">Household Search</label>
-                        <input type="text" class="form-control" id="household-search"
-                          placeholder="Type to search households..." autocomplete="off">
-                        <input type="hidden" id="selected-household-id" name="household_id">
-                        <ul id="results-list" class="list-group position-absolute w-100 d-none" style="z-index: 1050;">
-                        </ul>
-                        <div id="selected-household-members" class="mt-2"></div>
-                      </div>
-
-                      <div class="mb-3">
-                        <label class="form-label">Amount ($)</label>
-                        <input type="number" class="form-control" id="amount" step="0.01" required>
-                      </div>
-
-                      <div class="mb-3">
-                        <label class="form-label">Date</label>
-                        <input type="date" class="form-control" id="date" required>
-                      </div>
-
-                      <div class="mb-3">
-                        <label class="form-label">Project</label>
-                        <select class="form-select" id="project"></select>
-                      </div>
-
-                      <div class="mb-3">
-                        <label class="form-label">Method</label>
-                        <select class="form-select" id="method" required>
-                          <option value="" disabled selected>Select...</option>
-                          <option value="Check">Check</option>
-                          <option value="Venmo">Venmo</option>
-                          <option value="PayPal">PayPal</option>
-                          <option value="Cash">Cash</option>
-                          <option value="Other">Other</option>
-                        </select>
-                      </div>
-
-                      <button type="submit" id="submit-donation-btn" class="btn btn-primary w-100">Save
-                        Donation</button>
-                    </form>
-                  </div>
+                <div class="mb-3 position-relative">
+                  <label class="form-label">Household Search</label>
+                  <input type="text" class="form-control" id="household-search"
+                    placeholder="Type to search households..." autocomplete="off">
+                  <input type="hidden" id="selected-household-id" name="household_id">
+                  <ul id="results-list" class="list-group position-absolute w-100 d-none" style="z-index: 1050;">
+                  </ul>
+                  <div id="selected-household-members" class="mt-2"></div>
                 </div>
-              </div>
+
+                <div class="mb-3">
+                  <label class="form-label">Amount ($)</label>
+                  <input type="number" class="form-control" id="amount" step="0.01" required>
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">Date</label>
+                  <input type="date" class="form-control" id="date" required>
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">Project</label>
+                  <select class="form-select" id="project"></select>
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">Method</label>
+                  <select class="form-select" id="method" required>
+                    <option value="" disabled selected>Select...</option>
+                    <option value="Check">Check</option>
+                    <option value="Venmo">Venmo</option>
+                    <option value="PayPal">PayPal</option>
+                    <option value="Cash">Cash</option>
+                    <option value="DAF/Family Gift/QCD">DAF/Family Gift/QCD</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <button type="submit" id="submit-donation-btn" class="btn btn-primary w-100">Save
+                  Donation</button>
+              </form>
             </div>
+          </div>
+        </div>
+      </div>
 
-            <!-- VIEW: HOUSEHOLDS -->
-            <div id="view-households" class="view-section d-none">
-              <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2>Household Directory</h2>
-                <button class="btn btn-success" onclick="openAddHouseholdModal()">
-                  <i class="bi bi-house-add"></i> Add New Household
-                </button>
-              </div>
+      <!-- VIEW: HOUSEHOLDS -->
+      <div id="view-households" class="view-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2>Household Directory</h2>
+          <button class="btn btn-success" onclick="openAddHouseholdModal()">
+            <i class="bi bi-house-add"></i> Add New Household
+          </button>
+        </div>
 
-              <div id="households-grid" class="row g-3">
-                <!-- JS Rendered Cards -->
-              </div>
-            </div>
+        <div id="households-grid" class="row g-3">
+          <!-- JS Rendered Cards -->
+        </div>
+      </div>
 
-            <!-- VIEW: PROJECTS -->
-            <div id="view-projects" class="view-section d-none">
-              <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2>Project Management</h2>
-                <button class="btn btn-primary" onclick="openAddProjectModal()">
-                  <i class="bi bi-plus-circle"></i> Add Project
-                </button>
-              </div>
+      <!-- VIEW: PROJECTS -->
+      <div id="view-projects" class="view-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2>Project Management</h2>
+          <button class="btn btn-primary" onclick="openAddProjectModal()">
+            <i class="bi bi-plus-circle"></i> Add Project
+          </button>
+        </div>
 
-              <div id="projects-grid" class="row g-3">
-                <!-- JS Rendered Cards -->
-              </div>
-            </div>
-            <!-- /#view-projects -->
+        <div id="projects-grid" class="row g-3">
+          <!-- JS Rendered Cards -->
+        </div>
+      </div>
+      <!-- /#view-projects -->
 
           </div>
           <!-- /#page-content-wrapper -->

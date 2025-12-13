@@ -2,6 +2,17 @@
     let STATE = { households: [], projects: [], donations: [] };
     let CHARTS = {}; // Store chart instances
 
+    window.addEventListener('error', (event) => {
+        const err = event?.error instanceof Error ? event.error : new Error(event?.message || 'Unknown error');
+        try { showError(err); } catch { console.error(err); }
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+        const reason = event?.reason;
+        const err = reason instanceof Error ? reason : new Error(typeof reason === 'string' ? reason : JSON.stringify(reason));
+        try { showError(err); } catch { console.error(err); }
+    });
+
     window.onload = function () {
         document.getElementById('date').valueAsDate = new Date();
         google.script.run
@@ -26,8 +37,6 @@
             renderFilters();
 
             // Populate Projects Dropdown (Modal)
-            // ... (rest of function)
-
             const projectSelect = document.getElementById('project');
             if (projectSelect) {
                 projectSelect.innerHTML = '<option value="">No Project</option>';
@@ -42,10 +51,27 @@
             }
 
             initAutocomplete();
-            renderHouseholdsDirectory();
-            renderProjectsDirectory();
-            try { renderDashboard(); } catch (e) { console.warn('Dashboard render failed', e); }
-            try { renderDonationsTable(); } catch (e) { console.warn('Donations table render failed', e); }
+
+            // Initial Render based on active view or default
+            const activeView = document.querySelector('.view-section:not(.d-none)');
+
+            console.log('Active View found:', activeView ? activeView.id : 'None');
+
+            if (activeView && activeView.id !== 'view-dashboard') {
+                if (activeView.id === 'view-households') {
+                    console.log('Triggering renderHouseholdsDirectory from initApp');
+                    renderHouseholdsDirectory();
+                }
+                if (activeView.id === 'view-projects') {
+                    renderProjectsDirectory();
+                }
+                if (activeView.id === 'view-donations') {
+                    renderDonationsTable();
+                }
+            } else {
+                console.log('Defaulting to Dashboard render');
+                try { renderDashboard(); } catch (e) { console.warn('Dashboard render failed', e); }
+            }
 
             // Initialize auto-naming
             setupHouseholdAutoNaming();
@@ -132,6 +158,17 @@
         }
     }
 
+    // --- UTILS ---
+    function escapeHtml(text) {
+        if (!text) return '';
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
 
 
     // --- NAVIGATION ---
@@ -152,7 +189,7 @@
 
         // 3. Update Sidebar Active State
         if (linkElement) {
-            document.querySelectorAll('.list-group-item').forEach(el => {
+            document.querySelectorAll('#sidebar-wrapper .list-group-item').forEach(el => {
                 el.classList.remove('active', 'text-white');
                 el.classList.add('text-white-50');
             });
@@ -210,7 +247,7 @@
 
         // 3. Switch View
         // Find the donations link in sidebar
-        const donationsLink = document.querySelector('a[onclick*="view-donations"]');
+        const donationsLink = document.getElementById('nav-donations');
         switchView('view-donations', donationsLink);
 
         // 4. Trigger Render with potential special parameters?
@@ -263,61 +300,92 @@
     // --- HOUSEHOLD MANAGEMENT ---
     // --- HOUSEHOLD MANAGEMENT ---
     function renderHouseholdsDirectory() {
-        const grid = document.getElementById('households-grid');
-        grid.innerHTML = '';
+        console.log('renderHouseholdsDirectory() called');
+        try {
+            const grid = document.getElementById('households-grid');
+            if (!grid) {
+                console.error('Households grid element not found');
+                return;
+            }
+            grid.innerHTML = '';
 
-        // Sort by household name
-        const sorted = [...STATE.households].sort((a, b) =>
-            (a.household_name || '').localeCompare(b.household_name || '')
-        );
-
-        sorted.forEach(h => {
-            // --- Statistics Calculations ---
-            const hDonations = STATE.donations.filter(d => d.household_id === h.household_id);
-            const totalCents = hDonations.reduce((sum, d) => sum + d.amount_cents, 0);
-            const totalRaised = totalCents / 100;
-            const count = hDonations.length;
-
-            // Last Gift Date
-            let lastGiftDate = 'Never';
-            if (count > 0) {
-                // dates are ISO strings, compatible with Date constructor
-                const dates = hDonations.map(d => new Date(d.date).getTime());
-                const maxDate = new Date(Math.max(...dates));
-                lastGiftDate = maxDate.toLocaleDateString();
+            if (!STATE.households || !Array.isArray(STATE.households)) {
+                console.warn("STATE.households is not an array:", STATE.households);
+                grid.innerHTML = '<div class="col-12"><div class="alert alert-warning">No household data available</div></div>';
+                return;
             }
 
-            // Format Currency
-            const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalRaised);
+            console.log(`Rendering ${STATE.households.length} households...`);
+
+            if (STATE.households.length === 0) {
+                grid.innerHTML = '<div class="col-12"><div class="alert alert-info">No households found. Click "Add New Household" to get started.</div></div>';
+                return;
+            }
+
+            // Sort by household name
+            const sorted = [...STATE.households].sort((a, b) =>
+                (a.household_name || '').localeCompare(b.household_name || '')
+            );
+
+            sorted.forEach(h => {
+                // Defensive check: ensure household has required properties
+                if (!h || !h.household_id) {
+                    console.warn('Skipping invalid household:', h);
+                    return;
+                }
+
+                // Ensure members array exists
+                if (!h.members || !Array.isArray(h.members)) {
+                    console.warn(`Household ${h.household_id} has invalid members array:`, h.members);
+                    h.members = []; // Set to empty array to prevent errors
+                }
+
+                // --- Statistics Calculations ---
+                const hDonations = (STATE.donations || []).filter(d => d.household_id === h.household_id);
+                const totalCents = hDonations.reduce((sum, d) => sum + (d.amount_cents || 0), 0);
+                const totalRaised = totalCents / 100;
+                const count = hDonations.length;
+
+                // Last Gift Date
+                let lastGiftDate = 'Never';
+                if (count > 0) {
+                    // dates are ISO strings, compatible with Date constructor
+                    const dates = hDonations.map(d => new Date(d.date).getTime());
+                    const maxDate = new Date(Math.max(...dates));
+                    lastGiftDate = maxDate.toLocaleDateString();
+                }
+
+                // Format Currency
+                const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalRaised);
 
 
-            const address = h.address ?
-                `${h.address.street || ''}${h.address.street2 ? ', ' + h.address.street2 : ''}, ${h.address.city || ''}, ${h.address.state || ''} ${h.address.zip || ''}`.replace(/^[,\s]+|[,\s]+$/g, '')
-                : 'No Address';
+                const address = h.address ?
+                    `${escapeHtml(h.address.street || '')}${h.address.street2 ? ', ' + escapeHtml(h.address.street2) : ''}, ${escapeHtml(h.address.city || '')}, ${escapeHtml(h.address.state || '')} ${escapeHtml(h.address.zip || '')}`.replace(/^[,\s]+|[,\s]+$/g, '')
+                    : 'No Address';
 
-            const col = document.createElement('div');
-            col.className = 'col-md-6 col-lg-4';
+                const col = document.createElement('div');
+                col.className = 'col-md-6 col-lg-4';
 
-            // Generate Member List HTML
-            const membersHtml = h.members.map(m => {
-                const parts = [];
-                // Add stopPropagation to mail link to prevent card click
-                if (m.email) parts.push(`<a href="mailto:${m.email}" class="text-decoration-none text-muted" onclick="event.stopPropagation()"><i class="bi bi-envelope"></i> ${m.email}</a>`);
-                if (m.phone) parts.push(`<span class="text-muted"><i class="bi bi-telephone"></i> ${m.phone}</span>`);
-                const contactInfo = parts.join(' &bull; ');
+                // Generate Member List HTML
+                const membersHtml = h.members.length > 0 ? h.members.map(m => {
+                    const parts = [];
+                    // Add stopPropagation to mail link to prevent card click
+                    if (m.email) parts.push(`<a href="mailto:${escapeHtml(m.email)}" class="text-decoration-none text-muted" onclick="event.stopPropagation()"><i class="bi bi-envelope"></i> ${escapeHtml(m.email)}</a>`);
+                    if (m.phone) parts.push(`<span class="text-muted"><i class="bi bi-telephone"></i> ${escapeHtml(m.phone)}</span>`);
+                    const contactInfo = parts.join(' &bull; ');
 
-                return `
+                    return `
                     <div class="mb-2 pb-2 border-bottom last-child-no-border">
-                        <strong>${m.first_name} ${m.last_name}</strong>
+                        <strong>${escapeHtml(m.first_name)} ${escapeHtml(m.last_name)}</strong>
                         ${contactInfo ? `<div class="small">${contactInfo}</div>` : ''}
                     </div>
                 `;
-            }).join('');
+                }).join('') : '<div class="text-muted fst-italic">No members listed</div>';
 
-            col.innerHTML = `
-                <div class="card h-100 shadow-sm" style="cursor: pointer;" onclick="editHousehold('${h.household_id}')">
+                col.innerHTML = `
+                <div class="card h-100 shadow-sm" style="cursor: pointer;" onclick="editHousehold('${escapeHtml(h.household_id)}')">
                     <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                        <h5 class="card-title mb-0 text-truncate" title="${h.household_name}">${h.household_name}</h5>
+                        <h5 class="card-title mb-0 text-truncate" title="${escapeHtml(h.household_name)}">${escapeHtml(h.household_name)}</h5>
                         <!-- Dropdown Menu -->
                         <div class="dropdown">
                             <!-- stopPropagation on button is crucial -->
@@ -325,10 +393,10 @@
                                 <i class="bi bi-three-dots-vertical"></i>
                             </button>
                             <ul class="dropdown-menu dropdown-menu-end">
-                                <li><a class="dropdown-item" href="javascript:void(0)" onclick="editHousehold('${h.household_id}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
-                                <li><a class="dropdown-item" href="javascript:void(0)" onclick="viewHouseholdDonations('${h.household_id}')"><i class="bi bi-wallet2 me-2"></i>History</a></li>
+                                <li><button class="dropdown-item" type="button" onclick="editHousehold('${escapeHtml(h.household_id)}')"><i class="bi bi-pencil me-2"></i>Edit</button></li>
+                                <li><button class="dropdown-item" type="button" onclick="viewHouseholdDonations('${escapeHtml(h.household_id)}')"><i class="bi bi-wallet2 me-2"></i>History</button></li>
                                 <li><hr class="dropdown-divider"></li>
-                                <li><a class="dropdown-item text-danger" href="javascript:void(0)" onclick="deleteHousehold('${h.household_id}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                                <li><button class="dropdown-item text-danger" type="button" onclick="deleteHousehold('${escapeHtml(h.household_id)}')"><i class="bi bi-trash me-2"></i>Delete</button></li>
                             </ul>
                         </div>
                     </div>
@@ -358,14 +426,20 @@
                     </div>
                 </div>
             `;
-            grid.appendChild(col);
-        });
+                grid.appendChild(col);
+            });
+            console.log('renderHouseholdsDirectory() completed');
+        } catch (e) {
+            console.error('Error in renderHouseholdsDirectory:', e);
+            const grid = document.getElementById('households-grid');
+            if (grid) grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error rendering households: ${e.message}</div></div>`;
+        }
     }
 
     function viewHouseholdDonations(id) {
         // Find the donations nav link to update active state
         // The onclick in sidebar is: onclick="switchView('view-donations', this)"
-        const donationsLink = document.querySelector('a[onclick*="view-donations"]');
+        const donationsLink = document.getElementById('nav-donations');
 
         switchView('view-donations', donationsLink);
 
@@ -663,39 +737,65 @@
     // --- PROJECT MANAGEMENT ---
 
     function renderProjectsDirectory() {
-        const grid = document.getElementById('projects-grid');
-        grid.innerHTML = '';
+        console.log('renderProjectsDirectory() called');
+        try {
+            const grid = document.getElementById('projects-grid');
+            if (!grid) {
+                console.error('Projects grid element not found');
+                return;
+            }
+            grid.innerHTML = '';
 
-        // Sort by name
-        const sorted = [...STATE.projects].sort((a, b) =>
-            (a.name || '').localeCompare(b.name || '')
-        );
+            if (!STATE.projects || !Array.isArray(STATE.projects)) {
+                console.warn("STATE.projects is not an array:", STATE.projects);
+                grid.innerHTML = '<div class="col-12"><div class="alert alert-warning">No project data available</div></div>';
+                return;
+            }
 
-        sorted.forEach(p => {
-            const col = document.createElement('div');
-            col.className = 'col-md-6 col-lg-4';
+            console.log(`Rendering ${STATE.projects.length} projects...`);
 
-            col.innerHTML = `
-                <div class="card h-100 shadow-sm border-0 border-start border-4 border-primary">
-                    <div class="card-body">
-                         <div class="d-flex justify-content-between align-items-start mb-2">
-                             <h5 class="card-title fw-bold text-primary mb-0">${p.name}</h5>
+            if (STATE.projects.length === 0) {
+                grid.innerHTML = '<div class="col-12"><div class="alert alert-info">No projects found. Click "Add Project" to get started.</div></div>';
+                return;
+            }
+
+            // Sort by name
+            const sorted = [...STATE.projects].sort((a, b) =>
+                (a.name || '').localeCompare(b.name || '')
+            );
+
+            sorted.forEach(p => {
+                const col = document.createElement('div');
+                col.className = 'col-md-6 col-lg-4';
+
+                col.innerHTML = `
+                    <div class="card h-100 shadow-sm border-0 border-start border-4 border-primary">
+                        <div class="card-body">
+                             <div class="d-flex justify-content-between align-items-start mb-2">
+                                 <h5 class="card-title fw-bold text-primary mb-0">${escapeHtml(p.name)}</h5>
                              <div class="dropdown">
                                 <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown">
                                     <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                                 <ul class="dropdown-menu dropdown-menu-end">
-                                    <li><a class="dropdown-item" href="javascript:void(0)" onclick="editProject('${p.project_id}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
-                                    <li><a class="dropdown-item text-danger" href="javascript:void(0)" onclick="deleteProject('${p.project_id}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                                    <li><button class="dropdown-item" onclick="editProject('${escapeHtml(p.project_id)}')"><i class="bi bi-pencil me-2"></i>Edit</button></li>
+                                    <li><button class="dropdown-item text-danger" onclick="deleteProject('${escapeHtml(p.project_id)}')"><i class="bi bi-trash me-2"></i>Delete</button></li>
                                 </ul>
                             </div>
-                         </div>
-                         <p class="card-text text-muted">${p.description || '<span class="fst-italic">No description</span>'}</p>
+                        </div>
+
+                        ${p.description ? `<p class="card-text small text-muted">${escapeHtml(p.description)}</p>` : '<p class="card-text small text-muted fst-italic">No description</p>'}
                     </div>
                 </div>
              `;
-            grid.appendChild(col);
-        });
+                grid.appendChild(col);
+            });
+            console.log('renderProjectsDirectory() completed');
+        } catch (e) {
+            console.error('Error in renderProjectsDirectory:', e);
+            const grid = document.getElementById('projects-grid');
+            if (grid) grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error rendering projects: ${e.message}</div></div>`;
+        }
     }
 
     function openAddProjectModal() {
@@ -1321,8 +1421,8 @@
                 <td colspan="6">
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
-                            <i class="bi bi-chevron-right me-2 transition-transform" id="icon-${hId}"></i>
-                            <span class="fw-bold">${group.household.household_name}</span>
+                            <i class="bi bi-chevron-right me-2 transition-transform" id="icon-${escapeHtml(hId)}"></i>
+                            <span class="fw-bold">${escapeHtml(group.household.household_name)}</span>
                         </div>
                         <div class="d-flex gap-3 text-muted small">
                             <span>Count: <strong>${groupCount}</strong></span>
@@ -1344,7 +1444,7 @@
                 gByProject[pName] = (gByProject[pName] || 0) + d.amount_cents;
             });
             const gProjectSummary = Object.entries(gByProject).map(([name, cents]) =>
-                `<span class="badge bg-light text-dark border me-1">${name}: ${formatMoney(cents)}</span>`
+                `<span class="badge bg-light text-dark border me-1">${escapeHtml(name)}: ${formatMoney(cents)}</span>`
             ).join('');
 
             const childContent = `
@@ -1357,13 +1457,17 @@
                                 ${donations.map(d => {
                 const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'No Project';
                 return `
-                                        <tr class="donation-row border-bottom" onclick="openDonationModal('${d.txn_id}')" style="cursor: pointer;">
-                                            <td style="width: 15%;" class="ps-4 text-muted">${d.date.substring(0, 10)}</td>
-                                            <td style="width: 25%;"></td> <!-- Empty Household Col -->
-                                            <td style="width: 15%;" class="fw-bold">${formatMoney(d.amount_cents)}</td>
-                                            <td style="width: 20%;">${pName}</td>
-                                            <td style="width: 15%;">${d.method}</td>
-                                            <td style="width: 10%; text-end"><i class="bi bi-pencil-square text-muted opacity-25"></i></td> 
+                                        <tr class="donation-row border-bottom" onclick="openDonationModal('${escapeHtml(d.txn_id)}')" style="cursor: pointer;">
+                                            <td style="width: 15%;" class="ps-4 text-muted">${escapeHtml(d.date.substring(0, 10))}</td>
+                                            <td style="width: 15%;" class="text-muted"></td> <!-- Household name in header -->
+                                            <td style="width: 15%;" class="fw-bold text-success">${formatMoney(d.amount_cents)}</td>
+                                            <td style="width: 25%;">${escapeHtml(pName)}</td>
+                                            <td style="width: 15%;"><span class="badge bg-secondary">${escapeHtml(d.method)}</span></td>
+                                            <td style="width: 15%;" class="text-end pe-4">
+                                                <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); openDonationModal('${escapeHtml(d.txn_id)}')">
+                                                    <i class="bi bi-pencil"></i>
+                                                </button>
+                                            </td>
                                         </tr>
                                     `;
             }).join('')}
