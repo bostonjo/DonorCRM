@@ -62,7 +62,7 @@ function setupDatabase() {
     },
     { 
       name: 'db_Donations', 
-      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'meta_json'] 
+      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json'] 
     },
     { 
       name: 'db_Projects', 
@@ -196,7 +196,8 @@ function getInitialData() {
       project_id: String(row[2]),
       date: toIso(row[3]), // Ensure String
       amount_cents: Number(row[4]),
-      method: String(row[5])
+      method: String(row[5]),
+      comments: String(row[6] || '')
     }));
 
     return {
@@ -508,7 +509,7 @@ function saveDonation(payload) {
       userAgent: 'WebClient'
     });
 
-    // Append row: txn_id | household_id | project_id | date | amount_cents | method | meta_json
+    // Append row: txn_id | household_id | project_id | date | amount_cents | method | comments | meta_json
     sheet.appendRow([
       txn_id,
       payload.household_id,
@@ -516,6 +517,7 @@ function saveDonation(payload) {
       payload.date,
       payload.amount_cents,
       payload.method,
+      payload.comments || '',
       meta_json
     ]);
 
@@ -566,6 +568,7 @@ function updateDonation(payload) {
     sheet.getRange(rowIndex, 4).setValue(payload.date);
     sheet.getRange(rowIndex, 5).setValue(payload.amount_cents); 
     sheet.getRange(rowIndex, 6).setValue(payload.method);
+    sheet.getRange(rowIndex, 7).setValue(payload.comments || '');
 
     return { success: true };
 
@@ -810,19 +813,23 @@ function importDataInternal(payload) {
         }
     }
 
-    // 4. DONATIONS
+    // Process Donations - now with comments
+    const donationRows = [];
     if (payload.donations && payload.donations.length > 0) {
-        // 'txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'meta_json'
-        const rows = payload.donations.map(d => [
-            d.txn_id,
-            d.household_id,
-            d.project_id,
-            d.date,
-            d.amount_cents,
-            d.method,
-            "{}" // meta_json
-        ]);
-        donationsSheet.getRange(2, 1, rows.length, 7).setValues(rows);
+        payload.donations.forEach(d => {
+            // 'txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json'
+            donationRows.push([
+                d.txn_id,
+                d.household_id,
+                d.project_id,
+                d.date,
+                d.amount_cents,
+                d.method,
+                d.comments || '',
+                JSON.stringify(d.meta || {})
+            ]);
+        });
+        donationsSheet.getRange(2, 1, donationRows.length, 8).setValues(donationRows);
     }
 
     console.log("Import Complete: " + payload.donations.length + " donations imported.");

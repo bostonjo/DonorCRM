@@ -1461,7 +1461,10 @@
                                             <td style="width: 15%;" class="ps-4 text-muted">${escapeHtml(d.date.substring(0, 10))}</td>
                                             <td style="width: 15%;" class="text-muted"></td> <!-- Household name in header -->
                                             <td style="width: 15%;" class="fw-bold text-success">${formatMoney(d.amount_cents)}</td>
-                                            <td style="width: 25%;">${escapeHtml(pName)}</td>
+                                            <td style="width: 25%;">
+                                                ${escapeHtml(pName)}
+                                                ${d.comments ? `<i class="bi bi-chat-text-fill text-muted ms-2" title="${escapeHtml(d.comments)}"></i>` : ''}
+                                            </td>
                                             <td style="width: 15%;"><span class="badge bg-secondary">${escapeHtml(d.method)}</span></td>
                                             <td style="width: 15%;" class="text-end pe-4">
                                                 <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); openDonationModal('${escapeHtml(d.txn_id)}')">
@@ -1544,6 +1547,7 @@
 
             document.getElementById('project').value = donation.project_id || '';
             document.getElementById('method').value = donation.method;
+            document.getElementById('comments').value = donation.comments || '';
 
             // Show members preview
             if (household) {
@@ -1588,7 +1592,8 @@
             project_id: project,
             amount_cents: Math.round(amount * 100),
             date: date,
-            method: method
+            method: method,
+            comments: document.getElementById('comments').value
         };
 
         const successHandler = (res) => {
