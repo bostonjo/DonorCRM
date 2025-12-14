@@ -35,6 +35,7 @@
             STATE.donations = data.donations || [];
 
             renderFilters();
+            populateHouseholdFilters(); // Initialize Household Year Dropdown
 
             // Populate Projects Dropdown (Modal)
             const projectSelect = document.getElementById('project');
@@ -400,67 +401,200 @@
         }
     }
 
-    // --- HOUSEHOLD MANAGEMENT ---
+    // --- HOUSEHOLD FILTERING HELPERS ---
+    function populateHouseholdFilters() {
+        const yearSelect = document.getElementById('hh-filter-year');
+        if (!yearSelect) return;
+
+        // Save current selection if re-initializing
+        const currentVal = yearSelect.value;
+
+        yearSelect.innerHTML = '<option value="All">All Time</option>';
+
+        // Get Years from Donations
+        const years = [...new Set(STATE.donations.map(d => new Date(d.date).getFullYear()))].sort((a, b) => b - a);
+
+        years.forEach(y => {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            yearSelect.appendChild(opt);
+        });
+
+        // Add 'Never Donated' Option
+        const optNever = document.createElement('option');
+        optNever.value = 'Never';
+        optNever.textContent = 'Never Donated';
+        yearSelect.appendChild(optNever);
+
+        // Restore Selection if valid
+        if (currentVal && (years.includes(parseInt(currentVal)) || currentVal === 'All' || currentVal === 'Never')) {
+            yearSelect.value = currentVal;
+        }
+    }
+
+    function resetHouseholdFilters() {
+        document.getElementById('hh-filter-search').value = '';
+        document.getElementById('hh-filter-address').value = '';
+        document.getElementById('hh-filter-year').value = 'All';
+        document.getElementById('hh-filter-email').checked = false;
+        renderHouseholdsDirectory();
+    }
+
     // --- HOUSEHOLD MANAGEMENT ---
     function renderHouseholdsDirectory() {
         console.log('renderHouseholdsDirectory() called');
         try {
             const grid = document.getElementById('households-grid');
-            if (!grid) {
-                console.error('Households grid element not found');
-                return;
-            }
+            const summaryDiv = document.getElementById('household-summary-stats');
+
+            if (!grid) return;
             grid.innerHTML = '';
+            if (summaryDiv) summaryDiv.textContent = '';
 
             if (!STATE.households || !Array.isArray(STATE.households)) {
-                console.warn("STATE.households is not an array:", STATE.households);
                 grid.innerHTML = '<div class="col-12"><div class="alert alert-warning">No household data available</div></div>';
                 return;
             }
-
-            console.log(`Rendering ${STATE.households.length} households...`);
 
             if (STATE.households.length === 0) {
                 grid.innerHTML = '<div class="col-12"><div class="alert alert-info">No households found. Click "Add New Household" to get started.</div></div>';
                 return;
             }
 
-            // Sort by household name
-            const sorted = [...STATE.households].sort((a, b) =>
-                (a.household_name || '').localeCompare(b.household_name || '')
-            );
+            // --- FILTERING LOGIC ---
+            const searchTerm = (document.getElementById('hh-filter-search')?.value || '').toLowerCase().trim();
+            const addressTerm = (document.getElementById('hh-filter-address')?.value || '').toLowerCase().trim();
+            const yearFilter = document.getElementById('hh-filter-year')?.value || 'All';
+            const emailFilter = document.getElementById('hh-filter-email')?.checked || false;
+            const sortBy = document.getElementById('hh-sort-by')?.value || 'name_asc';
 
-            sorted.forEach(h => {
-                // Defensive check: ensure household has required properties
-                if (!h || !h.household_id) {
-                    console.warn('Skipping invalid household:', h);
-                    return;
+            // Pre-calculate donors for selected year
+            let authorizedIdsForYear = null;
+            if (yearFilter !== 'All') {
+                if (yearFilter === 'Never') {
+                    const allDonorIds = new Set(STATE.donations.map(d => d.household_id));
+                    authorizedIdsForYear = { type: 'never', set: allDonorIds };
+                } else {
+                    const targetYear = parseInt(yearFilter);
+                    const specificDonorIds = new Set(
+                        STATE.donations
+                            .filter(d => new Date(d.date).getFullYear() === targetYear)
+                            .map(d => d.household_id)
+                    );
+                    authorizedIdsForYear = { type: 'year', set: specificDonorIds };
+                }
+            }
+
+            // 1. Filter
+            const filtered = STATE.households.filter(h => {
+                // Name
+                let nameMatch = true;
+                if (searchTerm) {
+                    const hhName = (h.household_name || '').toLowerCase();
+                    const memberNames = (h.members || []).map(m => (m.first_name + ' ' + m.last_name).toLowerCase()).join(' ');
+                    if (!hhName.includes(searchTerm) && !memberNames.includes(searchTerm)) nameMatch = false;
                 }
 
-                // Ensure members array exists
-                if (!h.members || !Array.isArray(h.members)) {
-                    console.warn(`Household ${h.household_id} has invalid members array:`, h.members);
-                    h.members = []; // Set to empty array to prevent errors
+                // Address
+                let addrMatch = true;
+                if (addressTerm) {
+                    const displayAddr = h.address ?
+                        `${h.address.street} ${h.address.city} ${h.address.state} ${h.address.zip}`.toLowerCase() : '';
+                    if (!displayAddr.includes(addressTerm)) addrMatch = false;
                 }
 
-                // --- Statistics Calculations ---
+                // Email
+                let emailMatch = true;
+                if (emailFilter) {
+                    const hasEmail = (h.members || []).some(m => m.email && m.email.trim() !== '');
+                    if (!hasEmail) emailMatch = false;
+                }
+
+                // Year
+                let yearMatch = true;
+                if (authorizedIdsForYear && nameMatch && addrMatch && emailMatch) {
+                    if (authorizedIdsForYear.type === 'never') {
+                        if (authorizedIdsForYear.set.has(h.household_id)) yearMatch = false;
+                    } else {
+                        if (!authorizedIdsForYear.set.has(h.household_id)) yearMatch = false;
+                    }
+                }
+
+                return nameMatch && addrMatch && emailMatch && yearMatch;
+            });
+
+            // 2. Enrich with Stats (for Sorting & Summary)
+            // We need to calculate totals relative to the *Filtered Year*? 
+            // The user request implies "Donation Total (auto updates)". 
+            // Usually this means "Total given by these people in the selected context".
+            // If Year=2024, should the total be *Lifetime* or *2024*?
+            // "The cards displayed should auto update... Donation Total (auto updates)". 
+            // Standard directory behavior often shows Lifetime, but if I filter by 2024, showing 2024 giving is powerful.
+            // HOWEVER, the card shows "Lifetime" value currently. 
+            // I will stick to LIFETIME value for sorting/card display to avoid confusion unless I change the card UI too.
+            // But the *Summary* at the top should probably be the Sum of Lifetime Giving of these people? 
+            // Or if I filter by 2024, show their 2024 giving?
+            // Let's implement LIFETIME stats for now as it's the robust default.
+
+            const enriched = filtered.map(h => {
                 const hDonations = (STATE.donations || []).filter(d => d.household_id === h.household_id);
                 const totalCents = hDonations.reduce((sum, d) => sum + (d.amount_cents || 0), 0);
-                const totalRaised = totalCents / 100;
-                const count = hDonations.length;
 
-                // Last Gift Date
-                let lastGiftDate = 'Never';
-                if (count > 0) {
-                    // dates are ISO strings, compatible with Date constructor
-                    const dates = hDonations.map(d => new Date(d.date).getTime());
-                    const maxDate = new Date(Math.max(...dates));
-                    lastGiftDate = maxDate.toLocaleDateString();
+                // Last Gift
+                let lastGiftTime = 0;
+                let lastGiftDateStr = 'Never';
+                if (hDonations.length > 0) {
+                    const times = hDonations.map(d => new Date(d.date).getTime());
+                    lastGiftTime = Math.max(...times);
+                    lastGiftDateStr = new Date(lastGiftTime).toLocaleDateString();
                 }
 
-                // Format Currency
-                const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalRaised);
+                return {
+                    ...h,
+                    stats: {
+                        totalCents: totalCents,
+                        count: hDonations.length,
+                        lastGiftTime: lastGiftTime,
+                        lastGiftDateStr: lastGiftDateStr
+                    }
+                };
+            });
 
+            // 3. Update Summary
+            if (summaryDiv) {
+                const count = enriched.length;
+                const totalValue = enriched.reduce((sum, h) => sum + h.stats.totalCents, 0) / 100;
+                const fmtTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(totalValue);
+                summaryDiv.innerHTML = `<span class="fw-bold text-dark">${count}</span> ${count === 1 ? 'Household' : 'Households'} &bull; <span class="fw-bold text-success">${fmtTotal}</span> <span class="text-muted">Lifetime Value</span>`;
+            }
+
+            if (enriched.length === 0) {
+                grid.innerHTML = '<div class="col-12"><div class="alert alert-secondary text-center">No households match your filters. <a href="#" onclick="resetHouseholdFilters()" class="alert-link">Reset Filters</a></div></div>';
+                return;
+            }
+
+            // 4. Sort
+            enriched.sort((a, b) => {
+                switch (sortBy) {
+                    case 'name_desc':
+                        return (b.household_name || '').localeCompare(a.household_name || '');
+                    case 'total_desc':
+                        return b.stats.totalCents - a.stats.totalCents;
+                    case 'last_gift_desc':
+                        return b.stats.lastGiftTime - a.stats.lastGiftTime;
+                    case 'name_asc':
+                    default:
+                        return (a.household_name || '').localeCompare(b.household_name || '');
+                }
+            });
+
+            // 5. Render
+            enriched.forEach(h => {
+                // Ensure members array exists
+                if (!h.members) h.members = [];
+
+                const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(h.stats.totalCents / 100);
 
                 const address = h.address ?
                     `${escapeHtml(h.address.street || '')}${h.address.street2 ? ', ' + escapeHtml(h.address.street2) : ''}, ${escapeHtml(h.address.city || '')}, ${escapeHtml(h.address.state || '')} ${escapeHtml(h.address.zip || '')}`.replace(/^[,\s]+|[,\s]+$/g, '')
@@ -472,7 +606,6 @@
                 // Generate Member List HTML
                 const membersHtml = h.members.length > 0 ? h.members.map(m => {
                     const parts = [];
-                    // Add stopPropagation to mail link to prevent card click
                     if (m.email) parts.push(`<a href="mailto:${escapeHtml(m.email)}" class="text-decoration-none text-muted" onclick="event.stopPropagation()"><i class="bi bi-envelope"></i> ${escapeHtml(m.email)}</a>`);
                     if (m.phone) parts.push(`<span class="text-muted"><i class="bi bi-telephone"></i> ${escapeHtml(m.phone)}</span>`);
                     const contactInfo = parts.join(' &bull; ');
@@ -491,15 +624,14 @@
                         <h5 class="card-title mb-0 text-truncate" title="${escapeHtml(h.household_name)}">${escapeHtml(h.household_name)}</h5>
                         <!-- Dropdown Menu -->
                         <div class="dropdown">
-                            <!-- stopPropagation on button is crucial -->
                             <button class="btn btn-sm btn-link text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" onclick="event.stopPropagation()">
                                 <i class="bi bi-three-dots-vertical"></i>
                             </button>
                             <ul class="dropdown-menu dropdown-menu-end">
-                                <li><button class="dropdown-item" type="button" onclick="editHousehold('${escapeHtml(h.household_id)}')"><i class="bi bi-pencil me-2"></i>Edit</button></li>
-                                <li><button class="dropdown-item" type="button" onclick="viewHouseholdDonations('${escapeHtml(h.household_id)}')"><i class="bi bi-wallet2 me-2"></i>History</button></li>
+                                <li><button class="dropdown-item" type="button" onclick="event.stopPropagation(); editHousehold('${escapeHtml(h.household_id)}')"><i class="bi bi-pencil me-2"></i>Edit</button></li>
+                                <li><button class="dropdown-item" type="button" onclick="event.stopPropagation(); viewHouseholdDonations('${escapeHtml(h.household_id)}')"><i class="bi bi-wallet2 me-2"></i>History</button></li>
                                 <li><hr class="dropdown-divider"></li>
-                                <li><button class="dropdown-item text-danger" type="button" onclick="deleteHousehold('${escapeHtml(h.household_id)}')"><i class="bi bi-trash me-2"></i>Delete</button></li>
+                                <li><button class="dropdown-item text-danger" type="button" onclick="event.stopPropagation(); deleteHousehold('${escapeHtml(h.household_id)}')"><i class="bi bi-trash me-2"></i>Delete</button></li>
                             </ul>
                         </div>
                     </div>
@@ -512,11 +644,11 @@
                             </div>
                             <div class="col-4 border-end">
                                 <span class="d-block small text-muted text-uppercase" style="font-size: 0.7rem;">Gifts</span>
-                                <span class="fw-bold">${count}</span>
+                                <span class="fw-bold">${h.stats.count}</span>
                             </div>
                              <div class="col-4">
                                 <span class="d-block small text-muted text-uppercase" style="font-size: 0.7rem;">Last</span>
-                                <span class="fw-bold small">${lastGiftDate}</span>
+                                <span class="fw-bold small">${h.stats.lastGiftDateStr}</span>
                             </div>
                         </div>
 
@@ -541,20 +673,32 @@
 
     function viewHouseholdDonations(id) {
         // Find the donations nav link to update active state
-        // The onclick in sidebar is: onclick="switchView('view-donations', this)"
         const donationsLink = document.getElementById('nav-donations');
-
         switchView('view-donations', donationsLink);
 
-        // Update Filter
-        const hhSelect = document.getElementById('dm-filter-household');
-        if (hhSelect) {
-            hhSelect.value = id;
-            // If the ID isn't in the list (shouldn't happen if data syncs), fallback
-            if (hhSelect.value !== id) hhSelect.value = 'All';
+        // 1. Set Household Filter
+        const household = STATE.households.find(h => h.household_id === id);
+        const hhInput = document.getElementById('dm-filter-household-search');
+        const hhHidden = document.getElementById('dm-filter-household');
+
+        if (household && hhInput && hhHidden) {
+            hhInput.value = household.household_name;
+            hhHidden.value = id;
+            hhInput.classList.add('is-valid'); // Visual feedback
         }
 
-        // Render
+        // 2. Set Year Filter to All Time
+        const yearMode = document.getElementById('dm-filter-year-mode');
+        if (yearMode) {
+            yearMode.value = 'ALL';
+            handleYearModeChange('donations', true); // Update start/end hidden fields without double rendering
+        }
+
+        // 3. Reset Method Filter (optional but good practice)
+        const methodFilter = document.getElementById('dm-filter-method');
+        if (methodFilter) methodFilter.value = 'All';
+
+        // 4. Render
         renderDonationsTable();
     }
 
@@ -1787,18 +1931,9 @@
             `;
         }
 
-        // 4. Group by Household
-        const grouped = {}; // household_id -> { household: obj, donations: [] }
 
-        filtered.forEach(d => {
-            if (!grouped[d.household_id]) {
-                grouped[d.household_id] = {
-                    household: STATE.households.find(h => h.household_id === d.household_id) || { household_name: 'Unknown Group' },
-                    donations: []
-                };
-            }
-            grouped[d.household_id].donations.push(d);
-        });
+        // 4. Sort by Date (Newest First)
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
 
         // 5. Render Table Rows
         const tbody = document.getElementById('donations-table-body');
@@ -1808,109 +1943,29 @@
             return;
         }
 
-        // Sort Groups by Household Name
-        const sortedGroups = Object.values(grouped).sort((a, b) =>
-            (a.household.household_name || '').localeCompare(b.household.household_name || '')
-        );
+        const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 
-        sortedGroups.forEach(group => {
-            const hId = group.household.household_id || 'unknown';
-            const donations = group.donations.sort((a, b) => new Date(b.date) - new Date(a.date)); // Newest first
+        filtered.forEach(d => {
+            const h = STATE.households.find(hh => hh.household_id === d.household_id) || { household_name: 'Unknown Household' };
+            const p = STATE.projects.find(pp => pp.project_id === d.project_id) || { name: 'Unknown Project' };
 
-            const groupTotalCents = donations.reduce((sum, d) => sum + d.amount_cents, 0);
-            const groupCount = donations.length;
-            const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
-
-            // Group Header Row
-            const headerRow = document.createElement('tr');
-            headerRow.className = 'table-secondary';
-            headerRow.style.cursor = 'pointer';
-            headerRow.onclick = () => toggleGroup(hId);
-            headerRow.innerHTML = `
-                <td colspan="6">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <i class="bi bi-chevron-right me-2 transition-transform" id="icon-${escapeHtml(hId)}"></i>
-                            <span class="fw-bold">${escapeHtml(group.household.household_name)}</span>
-                        </div>
-                        <div class="d-flex gap-3 text-muted small">
-                            <span>Count: <strong>${groupCount}</strong></span>
-                            <span>Total: <strong class="text-dark">${formatMoney(groupTotalCents)}</strong></span>
-                        </div>
-                    </div>
-                </td>
-            `;
-            tbody.appendChild(headerRow);
-
-            // Child Rows Container
-            const childRow = document.createElement('tr');
-            childRow.id = `group-${hId}`;
-            childRow.className = 'd-none'; // Hidden by default
-
-            const gByProject = {};
-            donations.forEach(d => {
-                const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'Unknown';
-                gByProject[pName] = (gByProject[pName] || 0) + d.amount_cents;
-            });
-            const gProjectSummary = Object.entries(gByProject).map(([name, cents]) =>
-                `<span class="badge bg-light text-dark border me-1">${escapeHtml(name)}: ${formatMoney(cents)}</span>`
-            ).join('');
-
-            const childContent = `
-                <td colspan="6" class="p-0 border-0">
-                   <div class="p-3 bg-white border-bottom">
-                        ${gProjectSummary ? `<div class="mb-2 small">${gProjectSummary}</div>` : ''}
-                        
-                        <table class="table table-sm table-borderless mb-0">
-                            <tbody>
-                                ${donations.map(d => {
-                const pName = STATE.projects.find(p => p.project_id === d.project_id)?.name || 'No Project';
-                return `
-                                        <tr class="donation-row border-bottom" onclick="openDonationModal('${escapeHtml(d.txn_id)}')" style="cursor: pointer;">
-                                            <td style="width: 15%;" class="ps-4 text-muted">${escapeHtml(formatDateUS(d.date))}</td>
-                                            <td style="width: 15%;" class="text-muted"></td> <!-- Household name in header -->
-                                            <td style="width: 15%;" class="fw-bold text-success">${formatMoney(d.amount_cents)}</td>
-                                            <td style="width: 25%;">
-                                                ${escapeHtml(pName)}
-                                                ${d.comments ? `<i class="bi bi-chat-text-fill text-muted ms-2" title="${escapeHtml(d.comments)}"></i>` : ''}
-                                            </td>
-                                            <td style="width: 15%;"><span class="badge bg-secondary">${escapeHtml(d.method)}</span></td>
-                                            <td style="width: 15%;" class="text-end pe-4">
-                                                <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); openDonationModal('${escapeHtml(d.txn_id)}')">
-                                                    <i class="bi bi-pencil"></i>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    `;
-            }).join('')}
-                            </tbody>
-                        </table>
-                   </div>
-                </td>
-            `;
-            childRow.innerHTML = childContent;
-            tbody.appendChild(childRow);
-
-            // Auto-expand if filtered by specific household
-            if (householdId !== 'All') {
-                toggleGroup(hId);
-            }
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+            <td>${formatDateUS(d.date)}</td>
+            <td><a href="#" onclick="viewHouseholdDonations('${escapeHtml(d.household_id)}'); return false;">${escapeHtml(h.household_name)}</a></td>
+            <td>${formatMoney(d.amount_cents)}</td>
+            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(d.method)}</td>
+            <td class="text-end">
+                <button class="btn btn-sm btn-link text-primary" onclick="openDonationModal('${d.txn_id}')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-link text-danger" onclick="deleteDonation('${d.txn_id}')"><i class="bi bi-trash"></i></button>
+            </td>
+        `;
+            tbody.appendChild(tr);
         });
     }
 
-    function toggleGroup(hId) {
-        const row = document.getElementById(`group-${hId}`);
-        const icon = document.getElementById(`icon-${hId}`);
-        if (row.classList.contains('d-none')) {
-            row.classList.remove('d-none');
-            icon.classList.remove('bi-chevron-right');
-            icon.classList.add('bi-chevron-down');
-        } else {
-            row.classList.add('d-none');
-            icon.classList.remove('bi-chevron-down');
-            icon.classList.add('bi-chevron-right');
-        }
-    }
+
 
     function renderHouseholdMembersPreview(members) {
         if (!members || members.length === 0) return;
