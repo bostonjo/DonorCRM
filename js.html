@@ -2021,6 +2021,29 @@
     }
 
 
+    // --- SORTING STATE ---
+    let currentSort = {
+        field: 'date',
+        direction: 'desc'
+    };
+
+    function handleSort(field) {
+        if (currentSort.field === field) {
+            // Toggle
+            currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            // New field
+            currentSort.field = field;
+            // Default directions
+            if (field === 'date' || field === 'amount') {
+                currentSort.direction = 'desc';
+            } else {
+                currentSort.direction = 'asc';
+            }
+        }
+        renderDonationsTable();
+    }
+
     function resetDonationFilters() {
         // Reset Year Mode to Current
         const modeSel = document.getElementById('dm-filter-year-mode');
@@ -2041,6 +2064,10 @@
 
         document.getElementById('dm-filter-method').value = 'All';
         window.donationProjectFilter = null; // Clear override
+
+        // Reset Sort
+        currentSort = { field: 'date', direction: 'desc' };
+
         renderDonationsTable();
     }
 
@@ -2134,10 +2161,55 @@
         }
 
 
-        // 4. Sort by Date (Newest First)
-        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+        // 4. Sort Data
+        filtered.sort((a, b) => {
+            const field = currentSort.field;
+            const dir = currentSort.direction === 'asc' ? 1 : -1;
 
-        // 5. Render Table Rows
+            if (field === 'date') {
+                return (new Date(a.date) - new Date(b.date)) * dir;
+            }
+            if (field === 'amount') {
+                return (a.amount_cents - b.amount_cents) * dir;
+            }
+
+            // Text Compares
+            let valA = '', valB = '';
+
+            if (field === 'household') {
+                const hA = STATE.households.find(h => h.household_id === a.household_id);
+                const hB = STATE.households.find(h => h.household_id === b.household_id);
+                valA = hA ? hA.household_name : '';
+                valB = hB ? hB.household_name : '';
+            }
+            else if (field === 'project') {
+                const pA = STATE.projects.find(p => p.project_id === a.project_id);
+                const pB = STATE.projects.find(p => p.project_id === b.project_id);
+                valA = pA ? pA.name : '';
+                valB = pB ? pB.name : '';
+            }
+            else if (field === 'method') {
+                valA = a.method || '';
+                valB = b.method || '';
+            }
+
+            return valA.localeCompare(valB) * dir;
+        });
+
+        // 5. Update Header Icons
+        ['date', 'household', 'amount', 'project', 'method'].forEach(f => {
+            const icon = document.getElementById(`sort-icon-${f}`);
+            if (icon) {
+                if (currentSort.field === f) {
+                    icon.className = currentSort.direction === 'asc' ? 'bi bi-arrow-up-short' : 'bi bi-arrow-down-short';
+                } else {
+                    icon.className = '';
+                }
+            }
+        });
+
+
+        // 6. Render Table Rows
         const tbody = document.getElementById('donations-table-body');
         tbody.innerHTML = '';
         if (filtered.length === 0) {

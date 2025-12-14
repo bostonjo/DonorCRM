@@ -257,11 +257,16 @@
                     <table class="table table-custom-striped align-middle mb-0">
                       <thead class="table-light">
                         <tr>
-                          <th>Date</th>
-                          <th>Household</th>
-                          <th>Amount</th>
-                          <th>Project</th>
-                          <th>Method</th>
+                          <th class="sortable-header" onclick="handleSort('date')">Date <span
+                              id="sort-icon-date"></span></th>
+                          <th class="sortable-header" onclick="handleSort('household')">Household <span
+                              id="sort-icon-household"></span></th>
+                          <th class="sortable-header" onclick="handleSort('amount')">Amount <span
+                              id="sort-icon-amount"></span></th>
+                          <th class="sortable-header" onclick="handleSort('project')">Project <span
+                              id="sort-icon-project"></span></th>
+                          <th class="sortable-header" onclick="handleSort('method')">Method <span
+                              id="sort-icon-method"></span></th>
                           <th class="text-end">Actions</th>
                         </tr>
                       </thead>
