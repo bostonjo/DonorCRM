@@ -16,7 +16,8 @@
   <div class="d-flex" id="wrapper">
 
     <!-- Sidebar -->
-    <div class="bg-dark text-white p-3" id="sidebar-wrapper" style="min-width: 250px; min-height: 100vh;">
+    <div class="bg-dark text-white p-3 d-flex flex-column" id="sidebar-wrapper"
+      style="min-width: 250px; min-height: 100vh;">
       <div class="list-group list-group-flush">
         <button id="nav-dashboard" type="button"
           class="list-group-item list-group-item-action bg-transparent text-white p-3 active"
@@ -43,6 +44,11 @@
           onclick="switchView('view-export', this)">
           <i class="bi bi-file-earmark-arrow-down me-2"></i> Export
         </button>
+      </div>
+
+      <!-- Footer Logo -->
+      <div class="mt-auto text-center p-3 opacity-75">
+        <img id="sidebar-logo" src="" alt="Logo" class="img-fluid" style="max-width: 132px; display: none;">
       </div>
     </div>
 

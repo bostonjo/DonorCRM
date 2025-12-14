@@ -19,7 +19,24 @@
             .withSuccessHandler(initApp)
             .withFailureHandler(showError)
             .getInitialData();
+
+        fetchLogo();
     };
+
+    function fetchLogo() {
+        console.log("Fetching logo...");
+        google.script.run.withSuccessHandler(function (base64) {
+            if (base64) {
+                const img = document.getElementById('sidebar-logo');
+                if (img) {
+                    img.src = base64;
+                    img.style.display = 'inline-block';
+                }
+            } else {
+                console.warn("No logo returned from backend.");
+            }
+        }).getAppLogo();
+    }
 
     function initApp(resp) {
         console.log('initApp started with response:', resp);
