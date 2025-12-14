@@ -274,10 +274,189 @@
 
 
 
-    // --- NAVIGATION ---
-    // --- NAVIGATION ---
-    // --- NAVIGATION ---
-    window.switchView = function (viewId, linkElement) {
+    // --- NAVIGATION & HISTORY ---
+    const HISTORY = {
+        stack: [],
+        push: function (viewId) {
+            try {
+                const state = this.captureState(viewId);
+                this.stack.push(state);
+                this.updateBackButton();
+            } catch (e) {
+                console.error('HISTORY.push error:', e);
+            }
+        },
+        pop: function () {
+            if (this.stack.length === 0) return null;
+            const state = this.stack.pop();
+            this.updateBackButton();
+            return state;
+        },
+        updateBackButton: function () {
+            const btnContainer = document.getElementById('nav-back-container');
+            if (btnContainer) {
+                if (this.stack.length > 0) {
+                    btnContainer.classList.remove('d-none');
+                } else {
+                    btnContainer.classList.add('d-none');
+                }
+            }
+        },
+        captureState: function (viewId) {
+            const state = {
+                viewId: viewId,
+                timestamp: Date.now(),
+                data: {}
+            };
+
+            const getVal = (id) => {
+                const el = document.getElementById(id);
+                return el ? el.value : null;
+            };
+
+            const getChecked = (id) => {
+                const el = document.getElementById(id);
+                return el ? el.checked : false;
+            };
+
+            // Capture View-Specific Filters
+            if (viewId === 'view-households') {
+                state.data = {
+                    search: getVal('hh-filter-search') || '',
+                    address: getVal('hh-filter-address') || '',
+                    year: getVal('hh-filter-year') || 'All',
+                    email: getChecked('hh-filter-email'),
+                    sort: getVal('hh-sort-by') || 'name_asc'
+                };
+            } else if (viewId === 'view-donations') {
+                state.data = {
+                    yearMode: getVal('dm-filter-year-mode'),
+                    yearStart: getVal('dm-filter-year-start'),
+                    yearEnd: getVal('dm-filter-year-end'),
+                    householdSearch: getVal('dm-filter-household-search') || '',
+                    householdId: getVal('dm-filter-household') || 'All',
+                    method: getVal('dm-filter-method') || 'All'
+                };
+            } else if (viewId === 'view-dashboard') {
+                state.data = {
+                    yearMode: getVal('filter-year-mode'),
+                    yearStart: getVal('filter-year-start'),
+                    yearEnd: getVal('filter-year-end'),
+                    project: getVal('filter-project') || 'All',
+                    method: getVal('filter-method') || 'All',
+                    amount: getVal('filter-amount') || '0'
+                };
+            } else if (viewId === 'view-export') {
+                // Radio selection handle
+                let recordType = 'donations';
+                const radio = document.querySelector('input[name="exportRecordType"]:checked');
+                if (radio) recordType = radio.value;
+
+                state.data = {
+                    yearMode: getVal('export-filter-year-mode'),
+                    yearStart: getVal('export-filter-year-start'),
+                    yearEnd: getVal('export-filter-year-end'),
+                    householdSearch: getVal('export-filter-household-search') || '',
+                    householdId: getVal('export-filter-household') || 'All',
+                    method: getVal('export-filter-method') || 'All',
+                    recordType: recordType
+                };
+            }
+
+            return state;
+        },
+        restoreState: function (state) {
+            if (!state) return;
+
+            // 1. Switch View (Without pushing to stack again)
+            window.switchView(state.viewId, null, true); // true = isHistoryNavigation
+
+            // 2. Restore Filters
+            const d = state.data;
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && val !== null && val !== undefined) el.value = val;
+            };
+            const setChecked = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = !!val;
+            };
+
+            if (state.viewId === 'view-households') {
+                setVal('hh-filter-search', d.search);
+                setVal('hh-filter-address', d.address);
+                setVal('hh-filter-year', d.year);
+                setChecked('hh-filter-email', d.email);
+                setVal('hh-sort-by', d.sort);
+                renderHouseholdsDirectory();
+            } else if (state.viewId === 'view-donations') {
+                if (document.getElementById('dm-filter-year-mode')) {
+                    document.getElementById('dm-filter-year-mode').value = d.yearMode;
+                    handleYearModeChange('donations', true); // Sync hidden
+                }
+                setVal('dm-filter-year-start', d.yearStart);
+                setVal('dm-filter-year-end', d.yearEnd);
+                setVal('dm-filter-household-search', d.householdSearch);
+                setVal('dm-filter-household', d.householdId);
+                setVal('dm-filter-method', d.method);
+                renderDonationsTable();
+            } else if (state.viewId === 'view-dashboard') {
+                if (document.getElementById('filter-year-mode')) {
+                    document.getElementById('filter-year-mode').value = d.yearMode;
+                    handleYearModeChange('dashboard', true);
+                }
+                setVal('filter-year-start', d.yearStart);
+                setVal('filter-year-end', d.yearEnd);
+                setVal('filter-project', d.project);
+                setVal('filter-method', d.method);
+                if (document.getElementById('filter-amount')) {
+                    document.getElementById('filter-amount').value = d.amount;
+                    const display = document.getElementById('slider-val-display');
+                    if (display) display.textContent = '$' + d.amount;
+                }
+                renderDashboard();
+            } else if (state.viewId === 'view-export') {
+                if (document.getElementById('export-filter-year-mode')) {
+                    document.getElementById('export-filter-year-mode').value = d.yearMode;
+                    handleYearModeChange('export', true);
+                }
+                setVal('export-filter-year-start', d.yearStart);
+                setVal('export-filter-year-end', d.yearEnd);
+                setVal('export-filter-household-search', d.householdSearch);
+                setVal('export-filter-household', d.householdId);
+                setVal('export-filter-method', d.method);
+                if (d.recordType) {
+                    const radio = document.querySelector(`input[name="exportRecordType"][value="${d.recordType}"]`);
+                    if (radio) radio.checked = true;
+                }
+                updateExportPreview();
+            }
+        }
+    };
+
+    window.goBack = function () {
+        const prevState = HISTORY.pop();
+        if (prevState) {
+            HISTORY.restoreState(prevState);
+        }
+    };
+
+    window.switchView = function (viewId, linkElement, isHistoryNavigation = false) {
+        // 0. Push CURRENT view to History before switching (if not going back)
+        if (!isHistoryNavigation) {
+            try {
+                const currentView = document.querySelector('.view-section:not(.d-none)');
+                if (currentView) {
+                    // Eliminate self-navigation (pushing same view)
+                    if (currentView.id !== viewId) {
+                        HISTORY.push(currentView.id);
+                    }
+                }
+            } catch (err) {
+                console.warn("History push failed, continuing navigation:", err);
+            }
+        }
+
         // 1. Hide all views
         document.querySelectorAll('.view-section').forEach(el => el.classList.add('d-none'));
 
@@ -291,6 +470,19 @@
         }
 
         // 3. Update Sidebar Active State
+        // If linkElement is null (e.g. back button or drilldown), try to match by ID mapping
+        if (!linkElement) {
+            const map = {
+                'view-dashboard': 'nav-dashboard',
+                'view-donations': 'nav-donations',
+                'view-households': 'nav-households',
+                'view-projects': 'nav-projects',
+                'view-export': 'nav-export'
+            };
+            const navId = map[viewId];
+            if (navId) linkElement = document.getElementById(navId);
+        }
+
         if (linkElement) {
             document.querySelectorAll('#sidebar-wrapper .list-group-item').forEach(el => {
                 el.classList.remove('active', 'text-white');
@@ -301,11 +493,13 @@
         }
 
         // 4. Trigger specific renders if needed
-        if (viewId === 'view-households') renderHouseholdsDirectory();
-        if (viewId === 'view-projects') renderProjectsDirectory();
-        if (viewId === 'view-donations') renderDonationsTable();
-        if (viewId === 'view-dashboard') renderDashboard();
-        if (viewId === 'view-export') updateExportPreview();
+        if (!isHistoryNavigation) {
+            if (viewId === 'view-households') renderHouseholdsDirectory();
+            if (viewId === 'view-projects') renderProjectsDirectory();
+            if (viewId === 'view-donations') renderDonationsTable();
+            if (viewId === 'view-dashboard') renderDashboard();
+            if (viewId === 'view-export') updateExportPreview();
+        }
     }
 
     // Drill-down from Dashboard
@@ -590,7 +784,7 @@
             });
 
             // 5. Render
-            enriched.forEach(h => {
+            enriched.forEach((h, index) => {
                 // Ensure members array exists
                 if (!h.members) h.members = [];
 
@@ -602,6 +796,9 @@
 
                 const col = document.createElement('div');
                 col.className = 'col-md-6 col-lg-4';
+
+                // Assign Color
+                const colorClass = `card-color-${index % 9}`;
 
                 // Generate Member List HTML
                 const membersHtml = h.members.length > 0 ? h.members.map(m => {
@@ -619,8 +816,8 @@
                 }).join('') : '<div class="text-muted fst-italic">No members listed</div>';
 
                 col.innerHTML = `
-                <div class="card h-100 shadow-sm" style="cursor: pointer;" onclick="editHousehold('${escapeHtml(h.household_id)}')">
-                    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <div class="card h-100 shadow-sm ${colorClass}" style="cursor: pointer;" onclick="editHousehold('${escapeHtml(h.household_id)}')">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="card-title mb-0 text-truncate" title="${escapeHtml(h.household_name)}">${escapeHtml(h.household_name)}</h5>
                         <!-- Dropdown Menu -->
                         <div class="dropdown">
@@ -1637,7 +1834,7 @@
         countBadge.textContent = `${displayData.length} ${recordLabel}`;
         totalBadge.textContent = `Total: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalAmount / 100)}`;
 
-        // 5. Render Table (Top 10)
+        // 5. Render Table (All filtered records)
         const thead = document.getElementById('preview-table-headers');
         const tbody = document.getElementById('export-preview-body');
         thead.innerHTML = '';
@@ -1649,12 +1846,10 @@
             return;
         }
 
-        const previewLimit = 10;
-        const previewRows = displayData.slice(0, previewLimit);
-
+        // Render all rows (relies on container overflow-y for scrolling)
         if (selectedType === 'donations') {
             thead.innerHTML = '<th>Date</th><th>Household</th><th>Amount</th><th>Method</th><th>Project</th>';
-            previewRows.forEach(d => {
+            displayData.forEach(d => {
                 const h = STATE.households.find(x => x.household_id === d.household_id);
                 const p = STATE.projects.find(x => x.project_id === d.project_id);
                 const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(d.amount_cents / 100);
@@ -1671,7 +1866,7 @@
             });
         } else if (selectedType === 'households') {
             thead.innerHTML = '<th>Household Name</th><th>Members</th><th>City</th><th>State</th>';
-            previewRows.forEach(h => {
+            displayData.forEach(h => {
                 const members = h.members.map(m => `${m.first_name}`).join(', ');
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
@@ -1685,7 +1880,7 @@
         } else {
             // Projects
             thead.innerHTML = '<th>Project Name</th><th>Description</th>';
-            previewRows.forEach(p => {
+            displayData.forEach(p => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${escapeHtml(p.name)}</td>
@@ -1696,11 +1891,7 @@
         }
 
         const footer = document.getElementById('preview-footer');
-        if (displayData.length > previewLimit) {
-            footer.textContent = `Showing 10 of ${displayData.length} records`;
-        } else {
-            footer.textContent = `Showing ${displayData.length} records`;
-        }
+        footer.textContent = `Showing all ${displayData.length} records`;
     }
 
     function showAlert(type, message) {
@@ -1845,6 +2036,9 @@
         }
 
         document.getElementById('dm-filter-household').value = 'All';
+        const hhSearch = document.getElementById('dm-filter-household-search');
+        if (hhSearch) hhSearch.value = ''; // Clear text input
+
         document.getElementById('dm-filter-method').value = 'All';
         window.donationProjectFilter = null; // Clear override
         renderDonationsTable();
@@ -1909,21 +2103,29 @@
             ).join('');
 
             summaryContainer.innerHTML = `
-                <div class="card bg-light border-0">
-                    <div class="card-body py-2">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap">
-                            <div class="me-4 border-end pe-4">
-                                <span class="text-muted small text-uppercase">Total</span>
-                                <div class="fs-4 fw-bold text-success">${formatMoney(totalCents)}</div>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="card bg-gradient-primary-soft border-0 shadow-sm h-100 border-left-primary">
+                            <div class="card-body">
+                                <span class="text-primary small text-uppercase fw-bold">Total Raised</span>
+                                <div class="fs-4 fw-bold text-dark mt-1">${formatMoney(totalCents)}</div>
                                 <div class="small text-muted">${totalCount} donations</div>
                             </div>
-                            <div class="flex-grow-1 border-end px-4">
-                                <span class="text-muted small text-uppercase d-block mb-1">By Project</span>
-                                <div class="d-flex flex-wrap gap-3">${projectSummaryHtml || '<span class="text-muted small">-</span>'}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-white border-0 shadow-sm h-100 border-left-info">
+                            <div class="card-body">
+                                <span class="text-info small text-uppercase fw-bold mb-2 d-block">By Project</span>
+                                <div class="d-flex flex-column gap-1 small text-dark">${projectSummaryHtml || '<span class="text-muted">-</span>'}</div>
                             </div>
-                            <div class="ps-4">
-                                <span class="text-muted small text-uppercase d-block mb-1">By Method</span>
-                                <div class="d-flex flex-wrap">${methodSummaryHtml || '<span class="text-muted small">-</span>'}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-white border-0 shadow-sm h-100 border-left-success">
+                            <div class="card-body">
+                                <span class="text-success small text-uppercase fw-bold mb-2 d-block">By Method</span>
+                                <div class="d-flex flex-wrap gap-2 small text-dark">${methodSummaryHtml || '<span class="text-muted">-</span>'}</div>
                             </div>
                         </div>
                     </div>
