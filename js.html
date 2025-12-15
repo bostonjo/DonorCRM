@@ -19,24 +19,7 @@
             .withSuccessHandler(initApp)
             .withFailureHandler(showError)
             .getInitialData();
-
-        fetchLogo();
     };
-
-    function fetchLogo() {
-        console.log("Fetching logo...");
-        google.script.run.withSuccessHandler(function (base64) {
-            if (base64) {
-                const img = document.getElementById('sidebar-logo');
-                if (img) {
-                    img.src = base64;
-                    img.style.display = 'inline-block';
-                }
-            } else {
-                console.warn("No logo returned from backend.");
-            }
-        }).getAppLogo();
-    }
 
     function initApp(resp) {
         console.log('initApp started with response:', resp);
@@ -94,9 +77,20 @@
             // Initialize auto-naming
             setupHouseholdAutoNaming();
 
+            // Hide loading overlay
+            const loadingOverlay = document.getElementById('loading-overlay');
+            if (loadingOverlay) {
+                loadingOverlay.style.opacity = '0';
+                loadingOverlay.style.transition = 'opacity 0.3s ease';
+                setTimeout(() => loadingOverlay.remove(), 300);
+            }
+
         } catch (error) {
             console.error('CRITICAL INIT ERROR:', error);
             showError(error);
+            // Hide loading overlay even on error
+            const loadingOverlay = document.getElementById('loading-overlay');
+            if (loadingOverlay) loadingOverlay.remove();
         }
     }
 
@@ -522,19 +516,25 @@
     // Drill-down from Dashboard
     window.goToDonationsFiltered = function (overrides = {}) {
         // 1. Get Dashboard state
+        const dashboardYearMode = document.getElementById('filter-year-mode').value;
         const startYear = document.getElementById('filter-year-start').value;
         const endYear = document.getElementById('filter-year-end').value;
         const project = document.getElementById('filter-project').value;
         const method = document.getElementById('filter-method').value;
 
         // 2. Set Donation Filters (sync with dashboard, apply overrides)
+        const dYearMode = document.getElementById('dm-filter-year-mode');
         const dStart = document.getElementById('dm-filter-year-start');
         const dEnd = document.getElementById('dm-filter-year-end');
         const dHouse = document.getElementById('dm-filter-household');
         const dMethod = document.getElementById('dm-filter-method');
 
+        // Sync year mode dropdown from Dashboard to Donations
+        if (dYearMode) dYearMode.value = dashboardYearMode;
         if (dStart) dStart.value = startYear;
         if (dEnd) dEnd.value = endYear;
+        // Update visibility of custom range div based on year mode
+        handleYearModeChange('donations', true);
         // Project filter doesn't exist in Donations view currently, but we filter loosely by it? 
         // User didn't ask to add Project filter to donation view, but likely expects functionality.
         // The implementation plan implies applying filters. 
@@ -805,7 +805,7 @@
                 // Ensure members array exists
                 if (!h.members) h.members = [];
 
-                const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(h.stats.totalCents / 100);
+                const formattedTotal = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(h.stats.totalCents / 100);
 
                 const address = h.address ?
                     `${escapeHtml(h.address.street || '')}${h.address.street2 ? ', ' + escapeHtml(h.address.street2) : ''}, ${escapeHtml(h.address.city || '')}, ${escapeHtml(h.address.state || '')} ${escapeHtml(h.address.zip || '')}`.replace(/^[,\s]+|[,\s]+$/g, '')
@@ -886,6 +886,15 @@
     }
 
     function viewHouseholdDonations(id) {
+        // Check if we're already in the Donations view - if so, manually push current state
+        // This enables proper Back navigation when drilling down within the same view
+        const currentView = document.querySelector('.view-section:not(.d-none)');
+        if (currentView && currentView.id === 'view-donations') {
+            // We're already in Donations view, so switchView won't push state (same view check)
+            // Manually push current state before changing filters
+            HISTORY.push('view-donations');
+        }
+
         // Find the donations nav link to update active state
         const donationsLink = document.getElementById('nav-donations');
         switchView('view-donations', donationsLink);
@@ -912,7 +921,10 @@
         const methodFilter = document.getElementById('dm-filter-method');
         if (methodFilter) methodFilter.value = 'All';
 
-        // 4. Render
+        // 4. Clear project filter override (if any)
+        window.donationProjectFilter = null;
+
+        // 5. Render
         renderDonationsTable();
     }
 
@@ -1431,7 +1443,7 @@
             const current = progress * (end - start) + start;
             let formatted;
             if (prefix === "$") {
-                formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(current);
+                formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(current);
             } else {
                 formatted = Math.floor(current);
             }
@@ -1790,6 +1802,26 @@
         });
     }
 
+    // --- EXPORT SORTING STATE ---
+    let exportSort = {
+        field: 'date',
+        direction: 'desc'
+    };
+
+    function handleExportSort(field) {
+        if (exportSort.field === field) {
+            exportSort.direction = exportSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            exportSort.field = field;
+            if (field === 'date' || field === 'amount') {
+                exportSort.direction = 'desc';
+            } else {
+                exportSort.direction = 'asc';
+            }
+        }
+        updateExportPreview();
+    }
+
     function updateExportPreview() {
         // 1. Get Filters
         const startYear = parseInt(document.getElementById('export-filter-year-start').value);
@@ -1849,7 +1881,7 @@
         }
 
         countBadge.textContent = `${displayData.length} ${recordLabel}`;
-        totalBadge.textContent = `Total: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalAmount / 100)}`;
+        totalBadge.textContent = `Total: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(totalAmount / 100)}`;
 
         // 5. Render Table (All filtered records)
         const thead = document.getElementById('preview-table-headers');
@@ -1863,13 +1895,60 @@
             return;
         }
 
+        // Sort data before rendering
+        if (selectedType === 'donations') {
+            displayData.sort((a, b) => {
+                const field = exportSort.field;
+                const dir = exportSort.direction === 'asc' ? 1 : -1;
+
+                if (field === 'date') {
+                    return (new Date(a.date) - new Date(b.date)) * dir;
+                }
+                if (field === 'amount') {
+                    return (a.amount_cents - b.amount_cents) * dir;
+                }
+
+                let valA = '', valB = '';
+                if (field === 'household') {
+                    const hA = STATE.households.find(h => h.household_id === a.household_id);
+                    const hB = STATE.households.find(h => h.household_id === b.household_id);
+                    valA = hA ? hA.household_name : '';
+                    valB = hB ? hB.household_name : '';
+                } else if (field === 'project') {
+                    const pA = STATE.projects.find(p => p.project_id === a.project_id);
+                    const pB = STATE.projects.find(p => p.project_id === b.project_id);
+                    valA = pA ? pA.name : '';
+                    valB = pB ? pB.name : '';
+                } else if (field === 'method') {
+                    valA = a.method || '';
+                    valB = b.method || '';
+                }
+
+                return valA.localeCompare(valB) * dir;
+            });
+        }
+
+        // Helper to generate sortable header
+        const sortIcon = (field) => {
+            if (exportSort.field === field) {
+                return exportSort.direction === 'asc' ? '<i class="bi bi-arrow-up-short"></i>' : '<i class="bi bi-arrow-down-short"></i>';
+            }
+            return '';
+        };
+
         // Render all rows (relies on container overflow-y for scrolling)
         if (selectedType === 'donations') {
-            thead.innerHTML = '<th>Date</th><th>Household</th><th>Amount</th><th>Method</th><th>Project</th>';
+            thead.innerHTML = `
+                <th class="sortable-header" onclick="handleExportSort('date')">Date ${sortIcon('date')}</th>
+                <th class="sortable-header" onclick="handleExportSort('household')">Household ${sortIcon('household')}</th>
+                <th class="sortable-header" onclick="handleExportSort('amount')">Amount ${sortIcon('amount')}</th>
+                <th class="sortable-header" onclick="handleExportSort('method')">Method ${sortIcon('method')}</th>
+                <th class="sortable-header" onclick="handleExportSort('project')">Project ${sortIcon('project')}</th>
+            `;
             displayData.forEach(d => {
                 const h = STATE.households.find(x => x.household_id === d.household_id);
                 const p = STATE.projects.find(x => x.project_id === d.project_id);
-                const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(d.amount_cents / 100);
+                const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(d.amount_cents / 100);
 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
@@ -1882,15 +1961,27 @@
                 tbody.appendChild(tr);
             });
         } else if (selectedType === 'households') {
-            thead.innerHTML = '<th>Household Name</th><th>Members</th><th>City</th><th>State</th>';
+            thead.innerHTML = '<th>Household Name</th><th>Members</th><th>Email</th><th>Address</th>';
             displayData.forEach(h => {
-                const members = h.members.map(m => `${m.first_name}`).join(', ');
+                const members = h.members.map(m => `${m.first_name} ${m.last_name}`).join('; ');
+                const emails = h.members.map(m => m.email).filter(e => e).join('; ');
+                // Build address with Zip+4
+                let address = '';
+                if (h.address) {
+                    const parts = [];
+                    if (h.address.city) parts.push(h.address.city);
+                    if (h.address.state) parts.push(h.address.state);
+                    let zip = h.address.zip || '';
+                    if (h.address.zip4) zip += '-' + h.address.zip4;
+                    if (zip) parts.push(zip);
+                    address = parts.join(', ');
+                }
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${escapeHtml(h.household_name)}</td>
                     <td>${escapeHtml(members)}</td>
-                    <td>${escapeHtml(h.address?.city || '')}</td>
-                    <td>${escapeHtml(h.address?.state || '')}</td>
+                    <td>${escapeHtml(emails)}</td>
+                    <td>${escapeHtml(address)}</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -1926,20 +2017,31 @@
         showAlert('danger', 'System Error: ' + err.message);
     }
     // --- EXPORT FUNCTIONALITY ---
-    function exportToCSV() {
-        // 1. Get Filters
+
+    // Helper: Format address with Zip+4
+    function formatAddress(h) {
+        if (!h.address) return '';
+        const parts = [h.address.street];
+        if (h.address.street2) parts.push(h.address.street2);
+        if (h.address.city) parts.push(h.address.city);
+        if (h.address.state) parts.push(h.address.state);
+        let zip = h.address.zip || '';
+        if (h.address.zip4) zip += '-' + h.address.zip4;
+        if (zip) parts.push(zip);
+        return parts.join(', ');
+    }
+
+    // Helper: Get filtered data based on current filter settings
+    function getFilteredExportData() {
         const startYear = parseInt(document.getElementById('export-filter-year-start').value);
         const endYear = parseInt(document.getElementById('export-filter-year-end').value);
-        const householdFilter = document.getElementById('export-filter-household').value; // ID or "All"
+        const householdFilter = document.getElementById('export-filter-household').value;
         const methodFilter = document.getElementById('export-filter-method').value;
 
-        // 2. Identify Selection (Single Select)
         let selectedType = 'donations';
         if (document.getElementById('radio-export-households').checked) selectedType = 'households';
         if (document.getElementById('radio-export-projects').checked) selectedType = 'projects';
 
-        // 3. Filter Data
-        // Filter Donations first
         let filteredDonations = STATE.donations.filter(d => {
             const year = new Date(d.date).getFullYear();
             return year >= startYear && year <= endYear;
@@ -1948,88 +2050,158 @@
         if (householdFilter !== 'All') {
             filteredDonations = filteredDonations.filter(d => d.household_id === householdFilter);
         }
-
         if (methodFilter !== 'All') {
             filteredDonations = filteredDonations.filter(d => d.method === methodFilter);
         }
 
-        // Households
         const relevantHouseholdIds = new Set(filteredDonations.map(d => d.household_id));
         let filteredHouseholds = STATE.households.filter(h => {
             if (householdFilter !== 'All') return h.household_id === householdFilter;
             return relevantHouseholdIds.has(h.household_id);
         });
 
-        // Projects
-        const filteredProjects = STATE.projects;
+        // Sort donations based on current export sort settings
+        filteredDonations.sort((a, b) => {
+            const field = exportSort.field;
+            const dir = exportSort.direction === 'asc' ? 1 : -1;
 
+            if (field === 'date') {
+                return (new Date(a.date) - new Date(b.date)) * dir;
+            }
+            if (field === 'amount') {
+                return (a.amount_cents - b.amount_cents) * dir;
+            }
 
-        // 4. Generate CSV (Single File)
+            let valA = '', valB = '';
+            if (field === 'household') {
+                const hA = STATE.households.find(h => h.household_id === a.household_id);
+                const hB = STATE.households.find(h => h.household_id === b.household_id);
+                valA = hA ? hA.household_name : '';
+                valB = hB ? hB.household_name : '';
+            } else if (field === 'project') {
+                const pA = STATE.projects.find(p => p.project_id === a.project_id);
+                const pB = STATE.projects.find(p => p.project_id === b.project_id);
+                valA = pA ? pA.name : '';
+                valB = pB ? pB.name : '';
+            } else if (field === 'method') {
+                valA = a.method || '';
+                valB = b.method || '';
+            }
+
+            return valA.localeCompare(valB) * dir;
+        });
+
+        return { selectedType, filteredDonations, filteredHouseholds, filteredProjects: STATE.projects };
+    }
+
+    // Main export function - supports both CSV and XLSX
+    function exportData(format) {
+        const { selectedType, filteredDonations, filteredHouseholds, filteredProjects } = getFilteredExportData();
+
+        let data, headers, filename;
+
         if (selectedType === 'households') {
-            downloadCSV('Donors.csv', convertToCSV(filteredHouseholds, [
-                'household_id', 'household_name',
-                h => h.members.map(m => `${m.first_name} ${m.last_name}`).join('; '),
-                h => h.members.map(m => m.email).join('; '),
-                h => h.address ? `${h.address.street} ${h.address.street2 || ''} ${h.address.city} ${h.address.state} ${h.address.zip}` : '',
-                // Maybe detailed columns?
-                h => h.address?.street || '',
-                h => h.address?.city || '',
-                h => h.address?.state || '',
-                h => h.address?.zip || ''
-            ], ['ID', 'Household Name', 'Members', 'Emails', 'Full Address', 'Street', 'City', 'State', 'Zip']));
+            headers = ['Household Name', 'Members', 'Email Addresses', 'Address'];
+            data = filteredHouseholds.map(h => [
+                h.household_name,
+                h.members.map(m => `${m.first_name} ${m.last_name}`).join('; '),
+                h.members.map(m => m.email).filter(e => e).join('; '),
+                formatAddress(h)
+            ]);
+            filename = 'Donors';
+        } else if (selectedType === 'donations') {
+            headers = ['Date', 'Household Name', 'Amount', 'Method', 'Project'];
+            data = filteredDonations.map(d => {
+                const h = STATE.households.find(x => x.household_id === d.household_id);
+                const p = STATE.projects.find(x => x.project_id === d.project_id);
+                return [
+                    formatDateUS(d.date),
+                    h ? h.household_name : 'Unknown',
+                    Math.round(d.amount_cents / 100),
+                    d.method,
+                    p ? p.name : ''
+                ];
+            });
+            filename = 'Donations';
+        } else {
+            headers = ['ID', 'Name', 'Description'];
+            data = filteredProjects.map(p => [p.project_id, p.name, p.description || '']);
+            filename = 'Projects';
         }
-        else if (selectedType === 'donations') {
-            downloadCSV('Donations.csv', convertToCSV(filteredDonations, [
-                'donation_id', 'date', 'amount_cents', 'method', 'household_id', 'project_id', 'comments',
-                d => (d.amount_cents / 100).toFixed(2), // Formatted Amount
-                d => {
-                    const h = STATE.households.find(x => x.household_id === d.household_id);
-                    return h ? h.household_name : 'Unknown';
-                },
-                d => {
-                    const p = STATE.projects.find(x => x.project_id === d.project_id);
-                    return p ? p.name : 'Unknown';
-                }
-            ], ['ID', 'Date', 'Cents', 'Method', 'Household ID', 'Project ID', 'Comments', 'Amount ($)', 'Household Name', 'Project Name']));
+
+        if (data.length === 0) {
+            showAlert('warning', 'No records to export with the current filters.');
+            return;
         }
-        else if (selectedType === 'projects') {
-            downloadCSV('Projects.csv', convertToCSV(filteredProjects, [
-                'project_id', 'name', 'description'
-            ], ['ID', 'Name', 'Description']));
+
+        if (format === 'xlsx') {
+            exportToXLSX(data, headers, filename, selectedType);
+        } else {
+            exportToCSV(data, headers, filename);
         }
     }
 
-    function convertToCSV(objArray, fields, headers) {
-        if (!objArray || objArray.length === 0) return '';
+    // Export to XLSX with formatting
+    function exportToXLSX(data, headers, filename, dataType) {
+        const wb = XLSX.utils.book_new();
+        const wsData = [headers, ...data];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
 
+        // Set column widths based on data type
+        if (dataType === 'donations') {
+            ws['!cols'] = [
+                { wch: 12 },  // Date
+                { wch: 30 },  // Household Name
+                { wch: 12 },  // Amount
+                { wch: 15 },  // Method
+                { wch: 25 }   // Project
+            ];
+            // Apply currency format to Amount column (column C, index 2)
+            // Format code "$#,##0" = currency with no decimals
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for (let row = 1; row <= range.e.r; row++) {  // Skip header row
+                const cellRef = XLSX.utils.encode_cell({ r: row, c: 2 });
+                if (ws[cellRef]) {
+                    ws[cellRef].z = '"$"#,##0';
+                }
+            }
+        } else if (dataType === 'households') {
+            ws['!cols'] = [
+                { wch: 30 },  // Household Name
+                { wch: 35 },  // Members
+                { wch: 35 },  // Email Addresses
+                { wch: 50 }   // Address
+            ];
+        } else {
+            ws['!cols'] = [
+                { wch: 10 },  // ID
+                { wch: 30 },  // Name
+                { wch: 50 }   // Description
+            ];
+        }
+
+        XLSX.utils.book_append_sheet(wb, ws, dataType.charAt(0).toUpperCase() + dataType.slice(1));
+        XLSX.writeFile(wb, `${filename}.xlsx`);
+    }
+
+    // Export to CSV (legacy support)
+    function exportToCSV(data, headers, filename) {
         const escape = (val) => {
             if (val === null || val === undefined) return '';
-            const str = String(val).replace(/"/g, '""'); // Escape double quotes
+            const str = String(val).replace(/"/g, '""');
             return `"${str}"`;
         };
 
         const headerRow = headers.map(escape).join(',');
+        const rows = data.map(row => row.map(escape).join(','));
+        const csvContent = [headerRow, ...rows].join('\n');
 
-        const rows = objArray.map(obj => {
-            return fields.map(field => {
-                if (typeof field === 'function') {
-                    return escape(field(obj));
-                }
-                return escape(obj[field]);
-            }).join(',');
-        });
-
-        return [headerRow, ...rows].join('\n');
-    }
-
-    function downloadCSV(filename, csvContent) {
-        if (!csvContent) return;
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         if (link.download !== undefined) {
             const url = URL.createObjectURL(blob);
             link.setAttribute("href", url);
-            link.setAttribute("download", filename);
+            link.setAttribute("download", `${filename}.csv`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
@@ -2136,7 +2308,7 @@
             });
 
             // Generate Summary HTML
-            const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+            const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(cents / 100);
 
             let projectSummaryHtml = Object.entries(byProject).map(([name, stats]) =>
                 `<div><small class="text-muted">${name}:</small> <strong>${formatMoney(stats.cents)}</strong> <span class="text-muted">(${stats.count})</span></div>`
@@ -2234,7 +2406,7 @@
             return;
         }
 
-        const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+        const formatMoney = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(cents / 100);
 
         filtered.forEach(d => {
             const h = STATE.households.find(hh => hh.household_id === d.household_id) || { household_name: 'Unknown Household' };

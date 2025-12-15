@@ -8,10 +8,19 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <?!= include('css'); ?>
 </head>
 
 <body>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="position-fixed top-0 start-0 w-100 h-100 d-flex flex-column justify-content-center align-items-center bg-light" style="z-index: 9999;">
+    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <h5 class="text-muted">Loading...</h5>
+  </div>
 
   <div class="d-flex" id="wrapper">
 
@@ -48,12 +57,18 @@
 
       <!-- Footer Logo -->
       <div class="mt-auto text-center p-3 opacity-75">
-        <img id="sidebar-logo" src="" alt="Logo" class="img-fluid" style="max-width: 132px; display: none;">
+        <img id="sidebar-logo" src="https://drive.google.com/thumbnail?id=1MVHT9lmWj-pTj9Pp87O9dlWVNGcmAUZy&sz=s1000"
+          alt="Logo" class="img-fluid" style="max-width: 132px;">
       </div>
     </div>
 
     <!-- Page Content -->
     <div id="page-content-wrapper" class="container-fluid p-4 bg-light w-100">
+
+      <!-- Main Header -->
+      <div class="mb-4 pb-3 border-bottom">
+        <h1 class="display-5 fw-bold text-primary mb-0">Southwest Corridor Park Conservancy</h1>
+      </div>
 
       <!-- Back Navigation -->
       <div id="nav-back-container" class="mb-3 d-none">
@@ -534,9 +549,19 @@
             <!-- Preview Section -->
             <h5 class="card-title mb-3">3. Preview Data</h5>
             <div id="export-preview-container">
-              <div class="d-flex gap-3 mb-3">
-                <span class="badge bg-primary fs-6" id="preview-count-records">0 Records</span>
-                <span class="badge bg-success fs-6" id="preview-total-donated">Total: $0.00</span>
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="d-flex gap-3">
+                  <span class="badge bg-primary fs-6" id="preview-count-records">0 Records</span>
+                  <span class="badge bg-success fs-6" id="preview-total-donated">Total: $0.00</span>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportData('csv')">
+                    <i class="bi bi-filetype-csv me-1"></i> CSV
+                  </button>
+                  <button class="btn btn-primary btn-sm" type="button" onclick="exportData('xlsx')">
+                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> Excel
+                  </button>
+                </div>
               </div>
 
               <div class="table-responsive border rounded" style="max-height: 300px; overflow-y: auto;">
@@ -552,14 +577,6 @@
                 </table>
               </div>
               <div class="form-text mt-1 text-end" id="preview-footer">Showing top 10 rows</div>
-            </div>
-
-            <hr>
-
-            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
-              <button class="btn btn-primary" type="button" onclick="exportToCSV()">
-                <i class="bi bi-download me-2"></i> Export Selected to CSV
-              </button>
             </div>
 
           </div>

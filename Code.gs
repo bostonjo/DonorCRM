@@ -534,18 +534,7 @@ function saveDonation(payload) {
  * getAppLogo - Fetches the specific logo file from Drive and returns base64.
  * File ID: 1TFdBOctEpHFP-F3yAv6ElDb5AEJb-979
  */
-function getAppLogo() {
-  try {
-    const fileId = '1TFdBOctEpHFP-F3yAv6ElDb5AEJb-979';
-    const file = DriveApp.getFileById(fileId);
-    const blob = file.getBlob();
-    const base64 = Utilities.base64Encode(blob.getBytes());
-    return 'data:' + blob.getContentType() + ';base64,' + base64;
-  } catch (e) {
-    console.error('Error fetching logo:', e);
-    return null; // Frontend handles null
-  }
-}
+
 
 /**
  * updateDonation - Updates an existing donation.
