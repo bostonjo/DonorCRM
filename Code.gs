@@ -865,8 +865,8 @@ function sendThankYouEmail(payload) {
     // Join multiple recipients with comma
     const recipientList = payload.recipients.join(',');
 
-    // Send email using GmailApp
-    GmailApp.sendEmail(
+    // Send email using MailApp
+    MailApp.sendEmail(
       recipientList,
       payload.subject,
       payload.body,
@@ -884,3 +884,14 @@ function sendThankYouEmail(payload) {
   }
 }
 
+
+/**
+ * Run this function from the editor to trigger the authorization prompt.
+ * It accesses the MailApp service harmlessly to ensure permissions are granted.
+ */
+function debug_triggerAuth() {
+  console.log("Checking permissions...");
+  // Accessing this property requires email scope, triggering the auth flow
+  var quota = MailApp.getRemainingDailyQuota();
+  console.log("Authorization successful! Daily email quota remaining: " + quota);
+}
