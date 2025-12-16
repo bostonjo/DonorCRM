@@ -848,3 +848,39 @@ function importDataInternal(payload) {
   }
 }
 
+/**
+ * sendThankYouEmail - Sends a thank you email to donors.
+ * Payload: { recipients: [email], subject: string, body: string }
+ */
+function sendThankYouEmail(payload) {
+  if (!payload.recipients || payload.recipients.length === 0) {
+    throw new Error("No recipients provided.");
+  }
+
+  if (!payload.subject || !payload.body) {
+    throw new Error("Subject and body are required.");
+  }
+
+  try {
+    // Join multiple recipients with comma
+    const recipientList = payload.recipients.join(',');
+
+    // Send email using GmailApp
+    GmailApp.sendEmail(
+      recipientList,
+      payload.subject,
+      payload.body,
+      {
+        name: 'Southwest Corridor Park Conservancy',
+        htmlBody: payload.body.replace(/\n/g, '<br>')
+      }
+    );
+
+    return { success: true, message: 'Email sent successfully!' };
+
+  } catch (e) {
+    console.error('Error sending thank you email:', e);
+    throw new Error('Failed to send email: ' + e.toString());
+  }
+}
+

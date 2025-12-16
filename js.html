@@ -1782,7 +1782,7 @@
             resultsId: 'results-list',
             hiddenId: 'selected-household-id',
             membersId: 'selected-household-members',
-            onSelect: null // No special action
+            onSelect: (household) => updateThankYouButtonState(household)
         });
 
         // 2. Donation Filter Autocomplete
@@ -2479,6 +2479,7 @@
             // Show members preview
             if (household) {
                 renderHouseholdMembersPreview(household.members);
+                updateThankYouButtonState(household);
             }
 
         } else {
@@ -2488,6 +2489,8 @@
             form.reset();
             document.getElementById('selected-household-id').value = '';
             document.getElementById('date').valueAsDate = new Date();
+            // Reset thank you button state
+            updateThankYouButtonState(null);
         }
 
         donationModal.show();
@@ -2582,5 +2585,172 @@
                 alert('Error deleting donation: ' + err.message);
             })
             .deleteDonation(txn_id);
+    }
+
+    // --- THANK YOU LETTER FUNCTIONS ---
+    let thankYouModal = null;
+    let currentThankYouData = null;
+
+    const DEFAULT_THANK_YOU_MESSAGE = `Dear {donor_name},
+
+Thank you so much for your generous donation of {amount} to {organization}!
+
+Your contribution on {date}{project} makes a real difference in our community. We are deeply grateful for your support and commitment to our mission.
+
+Your generosity helps us continue our important work, and we couldn't do it without supporters like you.
+
+With sincere gratitude,
+The {organization} Team`;
+
+    function updateThankYouButtonState(household) {
+        const btn = document.getElementById('send-thank-you-btn');
+        const hint = document.getElementById('thank-you-hint');
+
+        if (!btn) return;
+
+        // Check if household has any member with an email
+        const hasEmail = household && household.members &&
+            household.members.some(m => m.email && m.email.trim() !== '');
+
+        btn.disabled = !hasEmail;
+
+        if (hasEmail) {
+            hint.textContent = 'Send a thank you email to this donor';
+            hint.classList.remove('text-muted');
+            hint.classList.add('text-success');
+        } else {
+            hint.textContent = 'Select a household with an email to enable';
+            hint.classList.remove('text-success');
+            hint.classList.add('text-muted');
+        }
+    }
+
+    function openThankYouModal() {
+        if (!thankYouModal) {
+            thankYouModal = new bootstrap.Modal(document.getElementById('thankYouModal'));
+        }
+
+        // Get current donation form data
+        const householdId = document.getElementById('selected-household-id').value;
+        const household = STATE.households.find(h => h.household_id === householdId);
+
+        if (!household) {
+            alert('Please select a household first.');
+            return;
+        }
+
+        // Get emails from household members
+        const emails = household.members
+            .filter(m => m.email && m.email.trim() !== '')
+            .map(m => m.email.trim());
+
+        if (emails.length === 0) {
+            alert('No email addresses found for this household.');
+            return;
+        }
+
+        // Get donation details from form
+        const amount = parseFloat(document.getElementById('amount').value) || 0;
+        const date = document.getElementById('date').value;
+        const projectId = document.getElementById('project').value;
+        const project = STATE.projects.find(p => p.project_id === projectId);
+
+        // Generate donor name from household members
+        const donorName = formatHouseholdName(household.members) || household.household_name;
+
+        // Store current data for sending
+        currentThankYouData = {
+            recipients: emails,
+            donorName: donorName,
+            amount: amount,
+            date: date,
+            projectName: project ? project.name : null,
+            householdName: household.household_name
+        };
+
+        // Update recipients display
+        document.getElementById('thank-you-recipients').textContent = emails.join(', ');
+
+        // Set default message with placeholders
+        document.getElementById('thank-you-message').value = DEFAULT_THANK_YOU_MESSAGE;
+
+        // Update preview
+        updateThankYouPreview();
+
+        // Add event listener for live preview updates
+        document.getElementById('thank-you-message').oninput = updateThankYouPreview;
+        document.getElementById('thank-you-subject').oninput = updateThankYouPreview;
+
+        thankYouModal.show();
+    }
+
+    function updateThankYouPreview() {
+        if (!currentThankYouData) return;
+
+        const messageTemplate = document.getElementById('thank-you-message').value;
+        const preview = document.getElementById('thank-you-preview');
+
+        // Format amount
+        const formattedAmount = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            maximumFractionDigits: 0
+        }).format(currentThankYouData.amount);
+
+        // Format date
+        const formattedDate = currentThankYouData.date ? formatDateUS(currentThankYouData.date) : 'N/A';
+
+        // Project text (only add if there's a project)
+        const projectText = currentThankYouData.projectName
+            ? ` toward ${currentThankYouData.projectName}`
+            : '';
+
+        // Replace placeholders
+        let previewText = messageTemplate
+            .replace(/\{donor_name\}/g, currentThankYouData.donorName)
+            .replace(/\{amount\}/g, formattedAmount)
+            .replace(/\{date\}/g, formattedDate)
+            .replace(/\{project\}/g, projectText)
+            .replace(/\{organization\}/g, 'Southwest Corridor Park Conservancy');
+
+        preview.textContent = previewText;
+    }
+
+    function sendThankYouEmail() {
+        if (!currentThankYouData) {
+            alert('No data available. Please try again.');
+            return;
+        }
+
+        const btn = document.getElementById('send-thank-you-confirm-btn');
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending...';
+
+        const subject = document.getElementById('thank-you-subject').value;
+        const messageTemplate = document.getElementById('thank-you-message').value;
+
+        // Get the processed message from preview
+        const processedMessage = document.getElementById('thank-you-preview').textContent;
+
+        const payload = {
+            recipients: currentThankYouData.recipients,
+            subject: subject,
+            body: processedMessage
+        };
+
+        google.script.run
+            .withSuccessHandler((res) => {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+                thankYouModal.hide();
+                showAlert('success', 'Thank you email sent successfully!');
+            })
+            .withFailureHandler((err) => {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+                alert('Error sending email: ' + err.message);
+            })
+            .sendThankYouEmail(payload);
     }
 </script>
