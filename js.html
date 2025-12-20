@@ -1533,7 +1533,7 @@
                     label: label,
                     data: data,
                     backgroundColor: [
-                        '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'
+                        '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796', '#6f42c1'
                     ],
                     borderWidth: 1
                 }]
@@ -2489,6 +2489,11 @@
             form.reset();
             document.getElementById('selected-household-id').value = '';
             document.getElementById('date').valueAsDate = new Date();
+            // Default project to "General Fund"
+            const generalFund = STATE.projects.find(p => p.name === 'General Fund');
+            if (generalFund) {
+                document.getElementById('project').value = generalFund.project_id;
+            }
             // Reset thank you button state
             updateThankYouButtonState(null);
         }
