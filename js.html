@@ -1833,6 +1833,7 @@
         let selectedType = 'donations';
         if (document.getElementById('radio-export-households').checked) selectedType = 'households';
         if (document.getElementById('radio-export-projects').checked) selectedType = 'projects';
+        if (document.getElementById('radio-export-mailchimp').checked) selectedType = 'mailchimp';
 
         // 3. Filter Data Logic
         // Always filter donations first as it drives time/method logic
@@ -1872,6 +1873,11 @@
             // Determine Total Donated for these households (in this period? or lifetime?)
             // User likely expects the sum of the filtered donations if that's what drove the household list.
             totalAmount = filteredDonations.reduce((sum, d) => sum + d.amount_cents, 0);
+            totalBadge.classList.remove('d-none');
+        } else if (selectedType === 'mailchimp') {
+            displayData = getMailchimpExportData();
+            recordLabel = 'Contacts';
+            totalAmount = displayData.reduce((sum, r) => sum + (r.ltv * 100), 0); // LTV is in dollars
             totalBadge.classList.remove('d-none');
         } else {
             // Projects
@@ -1985,15 +1991,59 @@
                 `;
                 tbody.appendChild(tr);
             });
+        } else if (selectedType === 'mailchimp') {
+            thead.textContent = '';
+            ['Email', 'Name', 'LAST_GIFT', 'LTV', 'Tags'].forEach(h => {
+                const th = document.createElement('th');
+                th.textContent = h;
+                thead.appendChild(th);
+            });
+            displayData.forEach(r => {
+                const tr = document.createElement('tr');
+                const lastGiftFormatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(r.lastGift);
+                const ltvFormatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(r.ltv);
+
+                const tdEmail = document.createElement('td');
+                tdEmail.textContent = r.email;
+                tr.appendChild(tdEmail);
+
+                const tdName = document.createElement('td');
+                tdName.textContent = r.firstName + ' ' + r.lastName;
+                tr.appendChild(tdName);
+
+                const tdLastGift = document.createElement('td');
+                tdLastGift.textContent = lastGiftFormatted;
+                tr.appendChild(tdLastGift);
+
+                const tdLtv = document.createElement('td');
+                tdLtv.textContent = ltvFormatted;
+                tr.appendChild(tdLtv);
+
+                const tdTags = document.createElement('td');
+                const small = document.createElement('small');
+                small.className = 'text-muted';
+                small.textContent = r.tags;
+                tdTags.appendChild(small);
+                tr.appendChild(tdTags);
+
+                tbody.appendChild(tr);
+            });
         } else {
             // Projects
-            thead.innerHTML = '<th>Project Name</th><th>Description</th>';
+            thead.textContent = '';
+            ['Project Name', 'Description'].forEach(h => {
+                const th = document.createElement('th');
+                th.textContent = h;
+                thead.appendChild(th);
+            });
             displayData.forEach(p => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${escapeHtml(p.name)}</td>
-                    <td>${escapeHtml(p.description || '-')}</td>
-                `;
+                const tdName = document.createElement('td');
+                tdName.textContent = p.name;
+                tr.appendChild(tdName);
+                const tdDesc = document.createElement('td');
+                tdDesc.textContent = p.description || '-';
+                tr.appendChild(tdDesc);
                 tbody.appendChild(tr);
             });
         }
@@ -2018,6 +2068,104 @@
     }
     // --- EXPORT FUNCTIONALITY ---
 
+    /**
+     * Build Mailchimp-ready export data
+     * Groups donations by email, calculates LAST_GIFT, GIFT_DATE, LTV, FIRST_GIFT
+     * Auto-generates year tags from donation dates
+     */
+    function getMailchimpExportData() {
+        const startYear = parseInt(document.getElementById('export-filter-year-start').value);
+        const endYear = parseInt(document.getElementById('export-filter-year-end').value);
+        const householdFilter = document.getElementById('export-filter-household').value;
+        const methodFilter = document.getElementById('export-filter-method').value;
+
+        // Filter donations by year range and filters
+        let filteredDonations = STATE.donations.filter(d => {
+            const year = new Date(d.date).getFullYear();
+            if (year < startYear || year > endYear) return false;
+            if (householdFilter !== 'All' && d.household_id !== householdFilter) return false;
+            if (methodFilter !== 'All' && d.method !== methodFilter) return false;
+            return true;
+        });
+
+        // Get relevant household IDs from filtered donations
+        const relevantHouseholdIds = new Set(filteredDonations.map(d => d.household_id));
+
+        // Build map: email -> { member, household, donations[] }
+        const emailMap = {};
+
+        STATE.households.forEach(h => {
+            if (!relevantHouseholdIds.has(h.household_id)) return;
+
+            // Get ALL donations for this household (for LTV calculation)
+            const householdDonations = STATE.donations.filter(d => d.household_id === h.household_id);
+            // Get filtered donations for tags
+            const filteredHouseholdDonations = filteredDonations.filter(d => d.household_id === h.household_id);
+
+            h.members.forEach(m => {
+                if (!m.email) return; // Skip members without email
+
+                const email = m.email.toLowerCase().trim();
+                if (!emailMap[email]) {
+                    emailMap[email] = {
+                        email: m.email,
+                        firstName: m.first_name || '',
+                        lastName: m.last_name || '',
+                        address: h.address || {},
+                        donations: householdDonations,
+                        filteredDonations: filteredHouseholdDonations
+                    };
+                } else {
+                    // Merge donations if same email appears in multiple households
+                    emailMap[email].donations = emailMap[email].donations.concat(householdDonations);
+                    emailMap[email].filteredDonations = emailMap[email].filteredDonations.concat(filteredHouseholdDonations);
+                }
+            });
+        });
+
+        // Convert to array and calculate metrics
+        const results = Object.values(emailMap).map(entry => {
+            const allDonations = entry.donations;
+            const filteredDons = entry.filteredDonations;
+
+            if (filteredDons.length === 0) return null; // No donations in filter range
+
+            // Sort by date for calculations
+            const sortedByDate = [...allDonations].sort((a, b) => new Date(b.date) - new Date(a.date));
+            const oldestFirst = [...allDonations].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // Calculate metrics
+            const lastGift = sortedByDate.length > 0 ? sortedByDate[0].amount_cents / 100 : 0;
+            const lastGiftDate = sortedByDate.length > 0 ? sortedByDate[0].date : null;
+            const firstGiftDate = oldestFirst.length > 0 ? oldestFirst[0].date : null;
+            const ltv = allDonations.reduce((sum, d) => sum + d.amount_cents, 0) / 100;
+
+            // Generate year tags from filtered donations
+            const years = new Set(filteredDons.map(d => new Date(d.date).getFullYear()));
+            const tags = Array.from(years).sort((a, b) => b - a).map(y => `Donor-${y}`).join(', ');
+
+            return {
+                email: entry.email,
+                firstName: entry.firstName,
+                lastName: entry.lastName,
+                lastGift: lastGift,
+                giftDate: lastGiftDate ? formatDateUS(lastGiftDate) : '',
+                ltv: ltv,
+                firstGift: firstGiftDate ? formatDateUS(firstGiftDate) : '',
+                street: entry.address.street || '',
+                city: entry.address.city || '',
+                state: entry.address.state || '',
+                zip: entry.address.zip || '',
+                tags: tags
+            };
+        }).filter(r => r !== null);
+
+        // Sort by email for consistent output
+        results.sort((a, b) => a.email.localeCompare(b.email));
+
+        return results;
+    }
+
     // Helper: Format address with Zip+4
     function formatAddress(h) {
         if (!h.address) return '';
@@ -2041,6 +2189,7 @@
         let selectedType = 'donations';
         if (document.getElementById('radio-export-households').checked) selectedType = 'households';
         if (document.getElementById('radio-export-projects').checked) selectedType = 'projects';
+        if (document.getElementById('radio-export-mailchimp').checked) selectedType = 'mailchimp';
 
         let filteredDonations = STATE.donations.filter(d => {
             const year = new Date(d.date).getFullYear();
@@ -2123,6 +2272,24 @@
                 ];
             });
             filename = 'Donations';
+        } else if (selectedType === 'mailchimp') {
+            headers = ['Email Address', 'First Name', 'Last Name', 'LAST_GIFT', 'GIFT_DATE', 'LTV', 'FIRST_GIFT', 'Address', 'City', 'State', 'Zip', 'Tags'];
+            const mailchimpData = getMailchimpExportData();
+            data = mailchimpData.map(r => [
+                r.email,
+                r.firstName,
+                r.lastName,
+                r.lastGift,
+                r.giftDate,
+                r.ltv,
+                r.firstGift,
+                r.street,
+                r.city,
+                r.state,
+                r.zip,
+                r.tags
+            ]);
+            filename = 'Mailchimp_Import';
         } else {
             headers = ['ID', 'Name', 'Description'];
             data = filteredProjects.map(p => [p.project_id, p.name, p.description || '']);
@@ -2172,6 +2339,29 @@
                 { wch: 35 },  // Email Addresses
                 { wch: 50 }   // Address
             ];
+        } else if (dataType === 'mailchimp') {
+            ws['!cols'] = [
+                { wch: 30 },  // Email Address
+                { wch: 15 },  // First Name
+                { wch: 15 },  // Last Name
+                { wch: 12 },  // LAST_GIFT
+                { wch: 12 },  // GIFT_DATE
+                { wch: 12 },  // LTV
+                { wch: 12 },  // FIRST_GIFT
+                { wch: 25 },  // Address
+                { wch: 15 },  // City
+                { wch: 8 },   // State
+                { wch: 10 },  // Zip
+                { wch: 30 }   // Tags
+            ];
+            // Apply currency format to LAST_GIFT (col 3) and LTV (col 5)
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for (let row = 1; row <= range.e.r; row++) {
+                const lastGiftCell = XLSX.utils.encode_cell({ r: row, c: 3 });
+                const ltvCell = XLSX.utils.encode_cell({ r: row, c: 5 });
+                if (ws[lastGiftCell]) ws[lastGiftCell].z = '"$"#,##0';
+                if (ws[ltvCell]) ws[ltvCell].z = '"$"#,##0';
+            }
         } else {
             ws['!cols'] = [
                 { wch: 10 },  // ID
