@@ -2982,7 +2982,8 @@ The {organization} Team`;
         const payload = {
             recipients: currentThankYouData.recipients,
             subject: subject,
-            body: processedMessage
+            body: processedMessage,
+            householdName: currentThankYouData.householdName
         };
 
         google.script.run

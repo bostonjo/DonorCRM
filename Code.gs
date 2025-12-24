@@ -1,6 +1,15 @@
 // App Version - update this when deploying new versions
 const APP_VERSION = '1.0.0';
 
+// Email archive folder ID
+const EMAIL_ARCHIVE_FOLDER_ID = '1ODJ1pXaIXR9CUMhWeuDDB5mz13DXWOoe';
+
+// Gmail draft template subject (used to find the template)
+const EMAIL_TEMPLATE_SUBJECT = 'TEMPLATE: Thank You Email';
+
+// Google Doc archive template ID
+const ARCHIVE_TEMPLATE_ID = '1Jm6Sxoset4Wzo8pmDReIIvU59QZdciUYdVPGLAbXx8Q';
+
 function getVersionInfo() {
   return {
     version: APP_VERSION,
@@ -9,6 +18,20 @@ function getVersionInfo() {
       hour: 'numeric', minute: '2-digit', hour12: true
     })
   };
+}
+
+/**
+ * getEmailTemplateHtml - Fetches the HTML content from a Gmail draft template.
+ * The draft is identified by its subject line matching EMAIL_TEMPLATE_SUBJECT.
+ */
+function getEmailTemplateHtml() {
+  const drafts = GmailApp.getDrafts();
+  for (const draft of drafts) {
+    if (draft.getMessage().getSubject() === EMAIL_TEMPLATE_SUBJECT) {
+      return draft.getMessage().getBody();
+    }
+  }
+  throw new Error('Email template draft not found. Create a Gmail draft with subject: ' + EMAIL_TEMPLATE_SUBJECT);
 }
 
 function doGet(e) {
@@ -878,8 +901,52 @@ function importDataInternal(payload) {
 }
 
 /**
+ * archiveEmail - Saves a copy of sent email using a Google Doc template.
+ * Copies the template and replaces placeholders with actual values.
+ */
+function archiveEmail(recipient, subject, htmlBody, householdName) {
+  if (!ARCHIVE_TEMPLATE_ID || ARCHIVE_TEMPLATE_ID === 'PASTE_TEMPLATE_DOC_ID_HERE') {
+    console.warn('Email archiving skipped: ARCHIVE_TEMPLATE_ID not configured');
+    return;
+  }
+
+  const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
+  const timestamp = Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd');
+  const timeStr = Utilities.formatDate(new Date(), 'America/New_York', 'h:mm a');
+  const safeHousehold = (householdName || 'Unknown').replace(/[^a-zA-Z0-9 _-]/g, '').substring(0, 50);
+  const docName = `${timestamp} - ${safeHousehold} - Thank You`;
+
+  // Copy template to archive folder
+  const templateFile = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
+  const newFile = templateFile.makeCopy(docName, folder);
+
+  // Open the copy and replace placeholders
+  const doc = DocumentApp.openById(newFile.getId());
+  const body = doc.getBody();
+
+  // Convert HTML to plain text for the body
+  const plainBody = htmlBody
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+
+  // Replace placeholders
+  body.replaceText('\\{\\{TO\\}\\}', recipient);
+  body.replaceText('\\{\\{SUBJECT\\}\\}', subject);
+  body.replaceText('\\{\\{DATE\\}\\}', timestamp + ' at ' + timeStr);
+  body.replaceText('\\{\\{EMAIL_BODY\\}\\}', plainBody);
+
+  doc.saveAndClose();
+}
+
+/**
  * sendThankYouEmail - Sends a thank you email to donors.
- * Payload: { recipients: [email], subject: string, body: string }
+ * Payload: { recipients: [email], subject: string, body: string, householdName: string }
  */
 function sendThankYouEmail(payload) {
   if (!payload.recipients || payload.recipients.length === 0) {
@@ -894,16 +961,27 @@ function sendThankYouEmail(payload) {
     // Join multiple recipients with comma
     const recipientList = payload.recipients.join(',');
 
+    // Get email template and replace placeholder with actual content
+    const templateHtml = getEmailTemplateHtml();
+    const htmlBody = templateHtml.replace('{{EMAIL_BODY}}', payload.body.replace(/\n/g, '<br>'));
+
     // Send email using MailApp
     MailApp.sendEmail(
       recipientList,
       payload.subject,
-      payload.body,
+      payload.body,  // Plain text fallback
       {
         name: 'Southwest Corridor Park Conservancy',
-        htmlBody: payload.body.replace(/\n/g, '<br>')
+        htmlBody: htmlBody  // HTML from template
       }
     );
+
+    // Archive email to Drive (non-blocking - don't fail if archive fails)
+    try {
+      archiveEmail(recipientList, payload.subject, htmlBody, payload.householdName);
+    } catch (archiveError) {
+      console.warn('Email sent but archiving failed:', archiveError);
+    }
 
     return { success: true, message: 'Email sent successfully!' };
 
