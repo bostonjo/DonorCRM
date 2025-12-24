@@ -57,10 +57,10 @@
         </button>
       </div>
 
-      <!-- Footer Logo -->
-      <div class="mt-auto text-center p-3 opacity-75">
-        <img id="sidebar-logo" src="https://drive.google.com/thumbnail?id=1MVHT9lmWj-pTj9Pp87O9dlWVNGcmAUZy&sz=s1000"
-          alt="Logo" class="img-fluid" style="max-width: 132px;">
+      <!-- Version Info -->
+      <div class="mt-auto text-center p-3 opacity-75 small">
+        <div>v<?= versionInfo.version ?></div>
+        <div class="text-muted"><?= versionInfo.timestamp ?></div>
       </div>
     </div>
 
@@ -282,7 +282,7 @@
                     <table class="table table-custom-striped align-middle mb-0">
                       <thead class="table-light">
                         <tr>
-                          <th class="sortable-header" onclick="handleSort('date')">Date <span
+                          <th class="sortable-header" onclick="handleSort('date')">Donation Date <span
                               id="sort-icon-date"></span></th>
                           <th class="sortable-header" onclick="handleSort('household')">Household <span
                               id="sort-icon-household"></span></th>
@@ -336,7 +336,7 @@
                 </div>
 
                 <div class="mb-3">
-                  <label class="form-label">Date</label>
+                  <label class="form-label">Donation Date</label>
                   <input type="date" class="form-control" id="date" required>
                 </div>
 
@@ -369,9 +369,9 @@
                   <input type="date" class="form-control" id="deposit-date">
                 </div>
 
-                <!-- Entry Date shown only when editing (read-only audit field) -->
+                <!-- Entry Date/Time shown only when editing (read-only audit field) -->
                 <div class="mb-3 d-none" id="entry-date-group">
-                  <label class="form-label text-muted">Entry Date <small>(Auto-set when created)</small></label>
+                  <label class="form-label text-muted">Entry Date/Time <small>(Auto-set when created)</small></label>
                   <input type="text" class="form-control-plaintext text-muted" id="entry-date" readonly>
                 </div>
 

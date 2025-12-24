@@ -1,6 +1,20 @@
+// App Version - update this when deploying new versions
+const APP_VERSION = '1.0.0';
+
+function getVersionInfo() {
+  return {
+    version: APP_VERSION,
+    timestamp: new Date().toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    })
+  };
+}
+
 function doGet(e) {
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
+  const template = HtmlService.createTemplateFromFile('Index');
+  template.versionInfo = getVersionInfo();
+  return template.evaluate()
     .setTitle('DonorCRM')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
@@ -60,9 +74,9 @@ function setupDatabase() {
       name: 'db_HouseholdMembers', 
       headers: ['member_id', 'household_id', 'first_name', 'last_name', 'email', 'phone', 'member_order', 'created_at'] 
     },
-    { 
-      name: 'db_Donations', 
-      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json'] 
+    {
+      name: 'db_Donations',
+      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json', 'entry_date', 'deposit_date']
     },
     { 
       name: 'db_Projects', 
@@ -531,7 +545,7 @@ function saveDonation(payload) {
       deposit_date
     ]);
 
-    return { success: true, txn_id: txn_id };
+    return { success: true, txn_id: txn_id, entry_date: entry_date };
 
   } catch (error) {
     throw error;
@@ -909,4 +923,183 @@ function debug_triggerAuth() {
   // Accessing this property requires email scope, triggering the auth flow
   var quota = MailApp.getRemainingDailyQuota();
   console.log("Authorization successful! Daily email quota remaining: " + quota);
+}
+
+/**
+ * DEV SETUP: Creates a dev database by copying production and linking it.
+ *
+ * This function does the following:
+ * 1. Copies the production spreadsheet to a new "DEV" copy
+ * 2. Links this Apps Script project to the copy
+ * 3. Adds any new columns (entry_date, deposit_date) if missing
+ *
+ * Usage:
+ * 1. Get the production spreadsheet ID from the production project
+ *    (Run dev_getProductionSheetId() on the PRODUCTION project)
+ * 2. Paste the ID in PROD_SHEET_ID below
+ * 3. Run this function from the Apps Script editor
+ */
+function dev_setupDevDatabase() {
+  // ========================================
+  // PASTE YOUR PRODUCTION SPREADSHEET ID HERE:
+  const PROD_SHEET_ID = 'PASTE_PRODUCTION_SHEET_ID_HERE';
+  // ========================================
+
+  if (PROD_SHEET_ID === 'PASTE_PRODUCTION_SHEET_ID_HERE') {
+    console.error('❌ ERROR: Please edit dev_setupDevDatabase() and paste your production spreadsheet ID');
+    console.log('');
+    console.log('To get the production spreadsheet ID:');
+    console.log('1. Open the PRODUCTION Apps Script project');
+    console.log('2. Run the function: dev_getProductionSheetId()');
+    console.log('3. Copy the ID from the log');
+    console.log('4. Paste it in the PROD_SHEET_ID variable above');
+    return;
+  }
+
+  try {
+    // Step 1: Open the production spreadsheet
+    console.log('📂 Opening production spreadsheet...');
+    const prodSS = SpreadsheetApp.openById(PROD_SHEET_ID);
+    console.log('   Found: ' + prodSS.getName());
+
+    // Step 2: Create a copy for dev
+    console.log('📋 Creating DEV copy...');
+    const devSS = prodSS.copy(prodSS.getName() + ' - DEV COPY');
+    const devSheetId = devSS.getId();
+    console.log('   Created: ' + devSS.getName());
+    console.log('   URL: ' + devSS.getUrl());
+
+    // Step 3: Link this project to the dev copy
+    console.log('🔗 Linking to this Apps Script project...');
+    PropertiesService.getScriptProperties().setProperty('SHEET_ID', devSheetId);
+    console.log('   Linked successfully!');
+
+    // Step 4: Add new columns if they don't exist
+    console.log('📊 Checking for new columns...');
+    dev_addNewColumnsIfMissing(devSS);
+
+    console.log('');
+    console.log('✅ DEV DATABASE SETUP COMPLETE!');
+    console.log('');
+    console.log('Dev Spreadsheet URL: ' + devSS.getUrl());
+    console.log('');
+    console.log('You can now test the dev deployment.');
+
+  } catch (e) {
+    console.error('❌ ERROR: ' + e.toString());
+    console.log('');
+    console.log('Common issues:');
+    console.log('- Invalid spreadsheet ID');
+    console.log('- No permission to access the production spreadsheet');
+    console.log('- Make sure you\'re signed into the correct Google account');
+  }
+}
+
+/**
+ * Helper function to add new columns (entry_date, deposit_date) if missing
+ */
+function dev_addNewColumnsIfMissing(ss) {
+  const donationsSheet = ss.getSheetByName('db_Donations');
+  if (!donationsSheet) {
+    console.log('   ⚠️ db_Donations sheet not found - will be created on first use');
+    return;
+  }
+
+  const headers = donationsSheet.getRange(1, 1, 1, donationsSheet.getLastColumn()).getValues()[0];
+  const expectedHeaders = ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json', 'entry_date', 'deposit_date'];
+
+  // Check if entry_date and deposit_date columns exist
+  const hasEntryDate = headers.includes('entry_date');
+  const hasDepositDate = headers.includes('deposit_date');
+
+  if (!hasEntryDate) {
+    const col = headers.length + 1;
+    donationsSheet.getRange(1, col).setValue('entry_date');
+    console.log('   Added column: entry_date (column ' + col + ')');
+  } else {
+    console.log('   ✓ entry_date column exists');
+  }
+
+  if (!hasDepositDate) {
+    const newHeaders = donationsSheet.getRange(1, 1, 1, donationsSheet.getLastColumn()).getValues()[0];
+    const col = newHeaders.length + 1;
+    donationsSheet.getRange(1, col).setValue('deposit_date');
+    console.log('   Added column: deposit_date (column ' + col + ')');
+  } else {
+    console.log('   ✓ deposit_date column exists');
+  }
+}
+
+/**
+ * DEV HELPER: Run this to add new columns to the dev database
+ * (Wrapper for dev_addNewColumnsIfMissing that can be run from the editor)
+ */
+function dev_addColumnsToDevDb() {
+  const ss = getDatasource();
+  if (!ss) {
+    console.error('❌ No database connected. Run dev_setupDevDatabase first or set SHEET_ID in Script Properties.');
+    return;
+  }
+  console.log('📊 Adding new columns to: ' + ss.getName());
+  dev_addNewColumnsIfMissing(ss);
+  console.log('✅ Done!');
+}
+
+/**
+ * DEV HELPER: Get the current spreadsheet ID (run this on PRODUCTION project)
+ *
+ * Run this function on the PRODUCTION Apps Script project to get the
+ * spreadsheet ID needed for dev_setupDevDatabase().
+ */
+function dev_getProductionSheetId() {
+  const props = PropertiesService.getScriptProperties();
+  const sheetId = props.getProperty('SHEET_ID');
+
+  if (sheetId) {
+    console.log('='.repeat(60));
+    console.log('PRODUCTION SPREADSHEET ID:');
+    console.log('');
+    console.log(sheetId);
+    console.log('');
+    console.log('Copy this ID and paste it into dev_setupDevDatabase()');
+    console.log('in the DEV Apps Script project.');
+    console.log('='.repeat(60));
+  } else {
+    console.log('No SHEET_ID found in Script Properties.');
+    console.log('This project may be using a bound spreadsheet.');
+
+    try {
+      const active = SpreadsheetApp.getActiveSpreadsheet();
+      if (active) {
+        console.log('');
+        console.log('Active spreadsheet ID: ' + active.getId());
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+}
+
+/**
+ * DEV HELPER: Link to an existing spreadsheet (manual method)
+ * Use if you already have a dev spreadsheet copy
+ */
+function dev_linkToSpreadsheet() {
+  // PASTE YOUR SPREADSHEET ID HERE:
+  const SHEET_ID = 'PASTE_SPREADSHEET_ID_HERE';
+
+  if (SHEET_ID === 'PASTE_SPREADSHEET_ID_HERE') {
+    console.error('ERROR: Please edit this function and paste your spreadsheet ID');
+    return;
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    PropertiesService.getScriptProperties().setProperty('SHEET_ID', SHEET_ID);
+    console.log('SUCCESS! Linked to spreadsheet: ' + ss.getName());
+    console.log('URL: ' + ss.getUrl());
+  } catch (e) {
+    console.error('ERROR: Could not open spreadsheet. Check the ID and permissions.');
+    console.error(e.toString());
+  }
 }
