@@ -2666,6 +2666,25 @@
             document.getElementById('method').value = donation.method;
             document.getElementById('comments').value = donation.comments || '';
 
+            // Populate deposit date if set
+            if (donation.deposit_date) {
+                const dep = new Date(donation.deposit_date);
+                const depYyyy = dep.getFullYear();
+                const depMm = String(dep.getMonth() + 1).padStart(2, '0');
+                const depDd = String(dep.getDate()).padStart(2, '0');
+                document.getElementById('deposit-date').value = `${depYyyy}-${depMm}-${depDd}`;
+            } else {
+                document.getElementById('deposit-date').value = '';
+            }
+
+            // Show entry date (read-only audit field)
+            if (donation.entry_date) {
+                document.getElementById('entry-date-group').classList.remove('d-none');
+                document.getElementById('entry-date').value = formatDateUS(donation.entry_date);
+            } else {
+                document.getElementById('entry-date-group').classList.add('d-none');
+            }
+
             // Show members preview
             if (household) {
                 renderHouseholdMembersPreview(household.members);
@@ -2684,6 +2703,10 @@
             if (generalFund) {
                 document.getElementById('project').value = generalFund.project_id;
             }
+            // Clear deposit date (optional for new donations)
+            document.getElementById('deposit-date').value = '';
+            // Hide entry date (will be auto-set on save)
+            document.getElementById('entry-date-group').classList.add('d-none');
             // Reset thank you button state
             updateThankYouButtonState(null);
         }
@@ -2711,6 +2734,8 @@
             return;
         }
 
+        const depositDate = document.getElementById('deposit-date').value;
+
         const payload = {
             txn_id: txnId, // Will be empty if new
             household_id: householdId,
@@ -2718,7 +2743,8 @@
             amount_cents: Math.round(amount * 100),
             date: date,
             method: method,
-            comments: document.getElementById('comments').value
+            comments: document.getElementById('comments').value,
+            deposit_date: depositDate || ''
         };
 
         const successHandler = (res) => {
@@ -2846,19 +2872,23 @@ The {organization} Team`;
 
         // Get donation details from form
         const amount = parseFloat(document.getElementById('amount').value) || 0;
-        const date = document.getElementById('date').value;
+        const date = document.getElementById('date').value;  // Donation Date
+        const depositDate = document.getElementById('deposit-date').value;  // Deposit Date
+        const entryDate = document.getElementById('entry-date').value;  // Entry Date (from edit mode)
         const projectId = document.getElementById('project').value;
         const project = STATE.projects.find(p => p.project_id === projectId);
 
         // Generate donor name from household members
         const donorName = formatHouseholdName(household.members) || household.household_name;
 
-        // Store current data for sending
+        // Store current data for sending (all three date fields available)
         currentThankYouData = {
             recipients: emails,
             donorName: donorName,
             amount: amount,
-            date: date,
+            date: date,              // Donation Date - when the donor gave
+            entryDate: entryDate,    // Entry Date - when logged (read-only)
+            depositDate: depositDate, // Deposit Date - internal tracking
             projectName: project ? project.name : null,
             householdName: household.household_name
         };
@@ -2892,8 +2922,10 @@ The {organization} Team`;
             maximumFractionDigits: 0
         }).format(currentThankYouData.amount);
 
-        // Format date
+        // Format all three date fields
         const formattedDate = currentThankYouData.date ? formatDateUS(currentThankYouData.date) : 'N/A';
+        const formattedEntryDate = currentThankYouData.entryDate || 'N/A';
+        const formattedDepositDate = currentThankYouData.depositDate ? formatDateUS(currentThankYouData.depositDate) : 'N/A';
 
         // Project text (only add if there's a project)
         const projectText = currentThankYouData.projectName
@@ -2901,10 +2933,13 @@ The {organization} Team`;
             : '';
 
         // Replace placeholders
+        // Available: {date} = Donation Date, {entry_date} = Entry Date, {deposit_date} = Deposit Date
         let previewText = messageTemplate
             .replace(/\{donor_name\}/g, currentThankYouData.donorName)
             .replace(/\{amount\}/g, formattedAmount)
             .replace(/\{date\}/g, formattedDate)
+            .replace(/\{entry_date\}/g, formattedEntryDate)
+            .replace(/\{deposit_date\}/g, formattedDepositDate)
             .replace(/\{project\}/g, projectText)
             .replace(/\{organization\}/g, 'Southwest Corridor Park Conservancy');
 

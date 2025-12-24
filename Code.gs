@@ -194,10 +194,12 @@ function getInitialData() {
       txn_id: String(row[0]),
       household_id: String(row[1]),
       project_id: String(row[2]),
-      date: toIso(row[3]), // Ensure String
+      date: toIso(row[3]), // Donation Date
       amount_cents: Number(row[4]),
       method: String(row[5]),
-      comments: String(row[6] || '')
+      comments: String(row[6] || ''),
+      entry_date: toIso(row[8]),    // When donation was logged (auto-set)
+      deposit_date: toIso(row[9])   // When deposit was made (internal use)
     }));
 
     return {
@@ -509,7 +511,13 @@ function saveDonation(payload) {
       userAgent: 'WebClient'
     });
 
-    // Append row: txn_id | household_id | project_id | date | amount_cents | method | comments | meta_json
+    // Entry date is always set to current date/time when donation is created
+    const entry_date = new Date().toISOString();
+
+    // Deposit date is optional - can be set later for internal tracking
+    const deposit_date = payload.deposit_date || '';
+
+    // Append row: txn_id | household_id | project_id | date | amount_cents | method | comments | meta_json | entry_date | deposit_date
     sheet.appendRow([
       txn_id,
       payload.household_id,
@@ -518,7 +526,9 @@ function saveDonation(payload) {
       payload.amount_cents,
       payload.method,
       payload.comments || '',
-      meta_json
+      meta_json,
+      entry_date,
+      deposit_date
     ]);
 
     return { success: true, txn_id: txn_id };
@@ -567,13 +577,18 @@ function updateDonation(payload) {
       throw new Error('Donation not found.');
     }
 
-    // Update Row
-    sheet.getRange(rowIndex, 2).setValue(payload.household_id); 
+    // Update Row (entry_date in column 9 is NOT updated - it's immutable)
+    sheet.getRange(rowIndex, 2).setValue(payload.household_id);
     sheet.getRange(rowIndex, 3).setValue(payload.project_id);
     sheet.getRange(rowIndex, 4).setValue(payload.date);
-    sheet.getRange(rowIndex, 5).setValue(payload.amount_cents); 
+    sheet.getRange(rowIndex, 5).setValue(payload.amount_cents);
     sheet.getRange(rowIndex, 6).setValue(payload.method);
     sheet.getRange(rowIndex, 7).setValue(payload.comments || '');
+    // Column 9 (entry_date) is immutable - not updated
+    // Column 10 (deposit_date) can be set/updated for internal tracking
+    if (payload.deposit_date !== undefined) {
+      sheet.getRange(rowIndex, 10).setValue(payload.deposit_date || '');
+    }
 
     return { success: true };
 
