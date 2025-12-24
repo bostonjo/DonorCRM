@@ -1,0 +1,14 @@
+# Ignore backup files
+*.bak
+*.backup
+
+# Ignore screen shots and docs
+Screen Shots/
+User_Manual.md
+LESSONS_LEARNED.md
+
+# Ignore CSV data files
+*.csv
+
+# Ignore clasp configs
+.clasp.prod.json
