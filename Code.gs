@@ -1169,23 +1169,48 @@ function oauth_preflight_check() {
     console.error("   ❌ FAIL - " + e.toString());
   }
 
-  // Test 3: DriveApp (drive) - SKIPPED due to API instability
+  // Test 3: DriveApp (drive)
   console.log("\n3. Testing DriveApp (drive)...");
-  results.scopes.push({
-    name: 'drive',
-    status: 'SKIPPED',
-    details: 'Google Drive API experiencing intermittent server errors'
-  });
-  console.log("   ⏭️  SKIPPED - Google API unstable");
+  try {
+    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
+    const folderName = folder.getName();
+    results.scopes.push({
+      name: 'drive',
+      status: 'OK',
+      details: 'Archive folder accessible: ' + folderName
+    });
+    console.log("   ✅ OK - Archive folder accessible: " + folderName);
+  } catch(e) {
+    results.scopes.push({
+      name: 'drive',
+      status: 'FAIL',
+      error: e.toString()
+    });
+    results.allPassed = false;
+    console.error("   ❌ FAIL - " + e.toString());
+  }
 
-  // Test 4: DocumentApp (documents) - SKIPPED due to API instability
+  // Test 4: DocumentApp (documents)
   console.log("\n4. Testing DocumentApp (documents)...");
-  results.scopes.push({
-    name: 'documents',
-    status: 'SKIPPED',
-    details: 'Google Docs API experiencing intermittent server errors'
-  });
-  console.log("   ⏭️  SKIPPED - Google API unstable");
+  try {
+    const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
+    const doc = DocumentApp.openById(ARCHIVE_TEMPLATE_ID);
+    const templateName = template.getName();
+    results.scopes.push({
+      name: 'documents',
+      status: 'OK',
+      details: 'Archive template accessible: ' + templateName
+    });
+    console.log("   ✅ OK - Archive template accessible: " + templateName);
+  } catch(e) {
+    results.scopes.push({
+      name: 'documents',
+      status: 'FAIL',
+      error: e.toString()
+    });
+    results.allPassed = false;
+    console.error("   ❌ FAIL - " + e.toString());
+  }
 
   // Test 5: SpreadsheetApp (spreadsheets)
   console.log("\n5. Testing SpreadsheetApp (spreadsheets)...");
