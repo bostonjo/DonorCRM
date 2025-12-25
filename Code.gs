@@ -914,43 +914,74 @@ function archiveEmail(recipient, subject, htmlBody, householdName) {
     return;
   }
 
-  if (!ARCHIVE_TEMPLATE_ID || ARCHIVE_TEMPLATE_ID === 'PASTE_TEMPLATE_DOC_ID_HERE') {
+  if (!ARCHIVE_TEMPLATE_ID || ARCHIVE_TEMPLATE_ID === 'PASTE_TEMPLATE_DOC_HERE') {
     console.warn('Email archiving skipped: ARCHIVE_TEMPLATE_ID not configured');
     return;
   }
 
-  const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
-  const timestamp = Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd');
-  const timeStr = Utilities.formatDate(new Date(), 'America/New_York', 'h:mm a');
-  const safeHousehold = (householdName || 'Unknown').replace(/[^a-zA-Z0-9 _-]/g, '').substring(0, 50);
-  const docName = `${timestamp} - ${safeHousehold} - Thank You`;
+  try {
+    console.log('Starting email archive process...');
+    console.log('Folder ID:', EMAIL_ARCHIVE_FOLDER_ID);
+    console.log('Template ID:', ARCHIVE_TEMPLATE_ID);
 
-  // Copy template to archive folder
-  const templateFile = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
-  const newFile = templateFile.makeCopy(docName, folder);
+    // Get folder - this is where it's likely failing
+    console.log('Getting archive folder...');
+    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
+    console.log('✓ Folder accessed successfully');
 
-  // Open the copy and replace placeholders
-  const doc = DocumentApp.openById(newFile.getId());
-  const body = doc.getBody();
+    const timestamp = Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd');
+    const timeStr = Utilities.formatDate(new Date(), 'America/New_York', 'h:mm a');
+    const safeHousehold = (householdName || 'Unknown').replace(/[^a-zA-Z0-9 _-]/g, '').substring(0, 50);
+    const docName = `${timestamp} - ${safeHousehold} - Thank You`;
+    console.log('Document name:', docName);
 
-  // Convert HTML to plain text for the body
-  const plainBody = htmlBody
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .trim();
+    // Copy template to archive folder
+    console.log('Getting template file...');
+    const templateFile = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
+    console.log('✓ Template accessed successfully');
 
-  // Replace placeholders
-  body.replaceText('\\{\\{TO\\}\\}', recipient);
-  body.replaceText('\\{\\{SUBJECT\\}\\}', subject);
-  body.replaceText('\\{\\{DATE\\}\\}', timestamp + ' at ' + timeStr);
-  body.replaceText('\\{\\{EMAIL_BODY\\}\\}', plainBody);
+    console.log('Creating copy...');
+    const newFile = templateFile.makeCopy(docName, folder);
+    console.log('✓ Copy created with ID:', newFile.getId());
 
-  doc.saveAndClose();
+    // Open the copy and replace placeholders
+    console.log('Opening document...');
+    const doc = DocumentApp.openById(newFile.getId());
+    const body = doc.getBody();
+    console.log('✓ Document opened');
+
+    // Convert HTML to plain text for the body
+    const plainBody = htmlBody
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .trim();
+
+    // Replace placeholders
+    console.log('Replacing placeholders...');
+    body.replaceText('\\{\\{TO\\}\\}', recipient);
+    body.replaceText('\\{\\{SUBJECT\\}\\}', subject);
+    body.replaceText('\\{\\{DATE\\}\\}', timestamp + ' at ' + timeStr);
+    body.replaceText('\\{\\{EMAIL_BODY\\}\\}', plainBody);
+    console.log('✓ Placeholders replaced');
+
+    console.log('Saving document...');
+    doc.saveAndClose();
+    console.log('✓ Email archived successfully!');
+
+  } catch (error) {
+    // Log detailed error information
+    console.error('Email archiving failed at step:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Error name:', error.name);
+
+    // Re-throw with more context
+    throw new Error('Email archiving failed: ' + error.message + '. Check Drive/Docs permissions for deployment.');
+  }
 }
 
 /**
