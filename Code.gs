@@ -1,5 +1,5 @@
 // App Version - update this when deploying new versions
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.2.0';
 
 // Email archive folder ID
 const EMAIL_ARCHIVE_FOLDER_ID = '1ODJ1pXaIXR9CUMhWeuDDB5mz13DXWOoe';
