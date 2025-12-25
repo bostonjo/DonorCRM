@@ -1091,23 +1091,36 @@ function debug_triggerAuth() {
   console.log("This will prompt you to authorize if you haven't already.");
 
   try {
-    // Just accessing these services triggers OAuth - we don't need to do complex operations
+    // Access each service to trigger OAuth for ALL scopes
+    console.log("- Checking MailApp...");
     MailApp.getRemainingDailyQuota();
-    GmailApp.getAliases();
-    DriveApp.getStorageLimit();
 
+    console.log("- Checking GmailApp...");
+    GmailApp.getAliases();
+
+    console.log("- Checking DriveApp...");
+    DriveApp.getStorageLimit();
+    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
+    console.log("  ✓ Archive folder accessible: " + folder.getName());
+
+    console.log("- Checking DocumentApp...");
+    const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
+    const doc = DocumentApp.openById(ARCHIVE_TEMPLATE_ID);
+    console.log("  ✓ Archive template accessible: " + template.getName());
+
+    console.log("- Checking SpreadsheetApp...");
+    const ss = getDatasource();
+    console.log("  ✓ Connected to: " + ss.getName());
+
+    console.log("");
     console.log("✅ Authorization complete!");
     console.log("All OAuth scopes have been approved.");
-    console.log("");
-    console.log("IMPORTANT: The web app still needs to be updated.");
-    console.log("In the browser, go to: Deploy > Manage deployments");
-    console.log("Click the edit icon (pencil) next to @HEAD");
-    console.log("Just click 'Deploy' - don't change anything");
-    console.log("This will update the web app to use the new scopes.");
+    console.log("Drive and Docs access verified successfully.");
 
   } catch (e) {
     console.error("Authorization error: " + e.toString());
     console.log("Please try running this function again.");
+    console.log("If the error persists, check the OAuth consent screen.");
   }
 }
 
