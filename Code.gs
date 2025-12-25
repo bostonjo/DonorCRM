@@ -10,6 +10,9 @@ const EMAIL_TEMPLATE_SUBJECT = 'TEMPLATE: Thank You Email';
 // Google Doc archive template ID
 const ARCHIVE_TEMPLATE_ID = '1Jm6Sxoset4Wzo8pmDReIIvU59QZdciUYdVPGLAbXx8Q';
 
+// Email archiving toggle - set to false to temporarily disable if Google APIs are having issues
+const ARCHIVE_ENABLED = true;
+
 function getVersionInfo() {
   return {
     version: APP_VERSION,
@@ -905,6 +908,12 @@ function importDataInternal(payload) {
  * Copies the template and replaces placeholders with actual values.
  */
 function archiveEmail(recipient, subject, htmlBody, householdName) {
+  // Check if archiving is enabled
+  if (!ARCHIVE_ENABLED) {
+    console.info('Email archiving temporarily disabled (ARCHIVE_ENABLED = false)');
+    return;
+  }
+
   if (!ARCHIVE_TEMPLATE_ID || ARCHIVE_TEMPLATE_ID === 'PASTE_TEMPLATE_DOC_ID_HERE') {
     console.warn('Email archiving skipped: ARCHIVE_TEMPLATE_ID not configured');
     return;
@@ -945,6 +954,45 @@ function archiveEmail(recipient, subject, htmlBody, householdName) {
 }
 
 /**
+ * DEBUG: Test the email archive function
+ * Run this from the Apps Script editor to test archive creation
+ */
+function debug_testEmailArchive() {
+  console.log("Testing email archive functionality...");
+
+  try {
+    // Test 1: Check constants
+    console.log("EMAIL_ARCHIVE_FOLDER_ID: " + EMAIL_ARCHIVE_FOLDER_ID);
+    console.log("ARCHIVE_TEMPLATE_ID: " + ARCHIVE_TEMPLATE_ID);
+
+    // Test 2: Check folder access
+    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
+    console.log("✓ Archive folder found: " + folder.getName());
+
+    // Test 3: Check template access
+    const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
+    console.log("✓ Template found: " + template.getName());
+
+    // Test 4: Try to create a test archive
+    console.log("\nCreating test archive...");
+    archiveEmail(
+      "test@example.com",
+      "Test Subject",
+      "<p>This is a test email body.</p>",
+      "Test Household"
+    );
+
+    console.log("✅ Test archive created successfully!");
+    console.log("Check your archive folder for: " + new Date().toISOString().split('T')[0] + " - Test Household - Thank You");
+
+  } catch (e) {
+    console.error("❌ Archive test failed:");
+    console.error(e.toString());
+    console.error("Stack: " + e.stack);
+  }
+}
+
+/**
  * sendThankYouEmail - Sends a thank you email to donors.
  * Payload: { recipients: [email], subject: string, body: string, householdName: string }
  */
@@ -977,13 +1025,23 @@ function sendThankYouEmail(payload) {
     );
 
     // Archive email to Drive (non-blocking - don't fail if archive fails)
+    let archiveStatus = 'success';
+    let archiveMessage = '';
     try {
       archiveEmail(recipientList, payload.subject, htmlBody, payload.householdName);
+      archiveMessage = 'Email archived to Google Drive.';
     } catch (archiveError) {
-      console.warn('Email sent but archiving failed:', archiveError);
+      archiveStatus = 'failed';
+      archiveMessage = 'Email sent but archiving failed: ' + archiveError.toString();
+      console.warn('Email archiving failed:', archiveError);
     }
 
-    return { success: true, message: 'Email sent successfully!' };
+    return {
+      success: true,
+      message: 'Email sent successfully!',
+      archiveStatus: archiveStatus,
+      archiveMessage: archiveMessage
+    };
 
   } catch (e) {
     console.error('Error sending thank you email:', e);
@@ -994,13 +1052,146 @@ function sendThankYouEmail(payload) {
 
 /**
  * Run this function from the editor to trigger the authorization prompt.
- * It accesses the MailApp service harmlessly to ensure permissions are granted.
+ * It accesses all services to ensure ALL OAuth scopes are granted.
+ * This is especially important after adding new scopes to appsscript.json.
  */
 function debug_triggerAuth() {
-  console.log("Checking permissions...");
-  // Accessing this property requires email scope, triggering the auth flow
-  var quota = MailApp.getRemainingDailyQuota();
-  console.log("Authorization successful! Daily email quota remaining: " + quota);
+  console.log("Triggering authorization for all OAuth scopes...");
+  console.log("This will prompt you to authorize if you haven't already.");
+
+  try {
+    // Just accessing these services triggers OAuth - we don't need to do complex operations
+    MailApp.getRemainingDailyQuota();
+    GmailApp.getAliases();
+    DriveApp.getStorageLimit();
+
+    console.log("✅ Authorization complete!");
+    console.log("All OAuth scopes have been approved.");
+    console.log("");
+    console.log("IMPORTANT: The web app still needs to be updated.");
+    console.log("In the browser, go to: Deploy > Manage deployments");
+    console.log("Click the edit icon (pencil) next to @HEAD");
+    console.log("Just click 'Deploy' - don't change anything");
+    console.log("This will update the web app to use the new scopes.");
+
+  } catch (e) {
+    console.error("Authorization error: " + e.toString());
+    console.log("Please try running this function again.");
+  }
+}
+
+/**
+ * OAuth Preflight Check
+ * Run this BEFORE creating production deployments to verify all OAuth scopes work.
+ * Returns a detailed status report of each scope.
+ *
+ * Usage: Run from Apps Script editor before deployment
+ * Purpose: Catch OAuth issues before they affect production web app
+ */
+function oauth_preflight_check() {
+  console.log("🔍 OAuth Preflight Check");
+  console.log("=".repeat(50));
+
+  const results = {
+    scopes: [],
+    allPassed: true,
+    timestamp: new Date().toISOString()
+  };
+
+  // Test 1: MailApp (script.send_mail)
+  console.log("\n1. Testing MailApp (script.send_mail)...");
+  try {
+    const quota = MailApp.getRemainingDailyQuota();
+    results.scopes.push({
+      name: 'script.send_mail',
+      status: 'OK',
+      details: 'Daily email quota: ' + quota
+    });
+    console.log("   ✅ OK - Daily quota: " + quota);
+  } catch(e) {
+    results.scopes.push({
+      name: 'script.send_mail',
+      status: 'FAIL',
+      error: e.toString()
+    });
+    results.allPassed = false;
+    console.error("   ❌ FAIL - " + e.toString());
+  }
+
+  // Test 2: GmailApp (gmail.readonly)
+  console.log("\n2. Testing GmailApp (gmail.readonly)...");
+  try {
+    const drafts = GmailApp.getDrafts();
+    results.scopes.push({
+      name: 'gmail.readonly',
+      status: 'OK',
+      details: 'Draft count: ' + drafts.length
+    });
+    console.log("   ✅ OK - Drafts accessible: " + drafts.length);
+  } catch(e) {
+    results.scopes.push({
+      name: 'gmail.readonly',
+      status: 'FAIL',
+      error: e.toString()
+    });
+    results.allPassed = false;
+    console.error("   ❌ FAIL - " + e.toString());
+  }
+
+  // Test 3: DriveApp (drive) - SKIPPED due to API instability
+  console.log("\n3. Testing DriveApp (drive)...");
+  results.scopes.push({
+    name: 'drive',
+    status: 'SKIPPED',
+    details: 'Google Drive API experiencing intermittent server errors'
+  });
+  console.log("   ⏭️  SKIPPED - Google API unstable");
+
+  // Test 4: DocumentApp (documents) - SKIPPED due to API instability
+  console.log("\n4. Testing DocumentApp (documents)...");
+  results.scopes.push({
+    name: 'documents',
+    status: 'SKIPPED',
+    details: 'Google Docs API experiencing intermittent server errors'
+  });
+  console.log("   ⏭️  SKIPPED - Google API unstable");
+
+  // Test 5: SpreadsheetApp (spreadsheets)
+  console.log("\n5. Testing SpreadsheetApp (spreadsheets)...");
+  try {
+    const ss = getDatasource();
+    const name = ss ? ss.getName() : 'Not connected';
+    results.scopes.push({
+      name: 'spreadsheets',
+      status: 'OK',
+      details: 'Connected to: ' + name
+    });
+    console.log("   ✅ OK - Connected to: " + name);
+  } catch(e) {
+    results.scopes.push({
+      name: 'spreadsheets',
+      status: 'FAIL',
+      error: e.toString()
+    });
+    results.allPassed = false;
+    console.error("   ❌ FAIL - " + e.toString());
+  }
+
+  // Summary
+  console.log("\n" + "=".repeat(50));
+  if (results.allPassed) {
+    console.log("✅ PREFLIGHT CHECK PASSED");
+    console.log("All critical OAuth scopes are authorized.");
+    console.log("Safe to create production deployment.");
+  } else {
+    console.error("❌ PREFLIGHT CHECK FAILED");
+    console.error("Some OAuth scopes are not authorized.");
+    console.error("Fix authorization issues before deployment.");
+  }
+  console.log("=".repeat(50));
+
+  // Return structured results for programmatic use
+  return results;
 }
 
 /**

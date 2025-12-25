@@ -2991,7 +2991,18 @@ The {organization} Team`;
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
                 thankYouModal.hide();
-                showAlert('success', 'Thank you email sent successfully!');
+
+                // Show email status + archive status
+                let message = 'Thank you email sent successfully!';
+                if (res.archiveStatus === 'failed') {
+                    message += '\n\nNote: ' + res.archiveMessage;
+                    showAlert('warning', message);
+                } else if (res.archiveStatus === 'success') {
+                    message += ' ' + res.archiveMessage;
+                    showAlert('success', message);
+                } else {
+                    showAlert('success', message);
+                }
             })
             .withFailureHandler((err) => {
                 btn.disabled = false;
