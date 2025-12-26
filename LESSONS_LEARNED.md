@@ -66,3 +66,41 @@ Use `oauth_preflight_check()` in Code.gs to verify all scopes are authorized bef
 **Related Files:**
 - `scripts/deploy-with-oauth.sh` - Automated deployment script with OAuth handling
 - Code.gs: `oauth_preflight_check()` - Validates OAuth scopes before deployment
+
+## 4. Advanced Services & Cloud Console Synchronization
+**Date:** 2025-12-25
+**Issue:** Persistent "server errors" (500) when using built-in `DriveApp` and `DocumentApp` services.
+**Discovery:**
+- Enabling "Advanced Services" in the Apps Script editor is only half the battle.
+- The corresponding APIs (Drive API v3, Docs API v1) **must also be enabled** in the underlying Google Cloud Project console (console.cloud.google.com).
+- Failing to do so results in a generic 500 error that gives no indication of the missing API configuration.
+
+## 5. Drive API v3 vs. DriveApp (Shared Drives)
+**Discovery:**
+- Unlike the built-in `DriveApp`, the Advanced Drive Service (v3) is strictly partitioned.
+- To access files or folders in a **Shared Drive**, you must explicitly include the flag `{ supportsAllDrives: true }` in every API call (get, copy, list, etc.).
+- Without this flag, the API returns a "File not found" error, even if the user has full permissions.
+
+## 6. Database Safety & Initialization
+**Discovery:**
+- Traditional `sheet.clear()` initialization patterns are catastrophic for production databases.
+- **Best Practice:** Use a "Diff and Append" approach for headers. Compare the required schema against existing columns and only append missing ones to the end of the header row.
+- **Legacy Fallbacks:** When migrating data from a JSON blob (like `meta_json`) to dedicated columns, the loading logic should attempt to "recover" data from the old location if the new column is empty.
+
+## 7. Maintaining Production URLs
+**Discovery:**
+- To keep a Production URL constant while updating code, use the specific deployment ID with clasp:
+  `clasp deploy -i [DEPLOYMENT_ID] -V [VERSION_NUMBER] -d "Description"`
+- Creating a "New Deployment" in the UI generates a new URL, which breaks external bookmarks/links.
+
+## 8. User Tracking & Audit Trails
+**Date:** 2025-12-25
+**Discovery:**
+- `Session.getActiveUser().getEmail()` provides a reliable audit trail for actions taken within the app.
+- Storing a `logged_by` field alongside `entry_date` ensures accountability.
+- **Apps Script State Loss:** When updating local `STATE` objects in the frontend after a successful `google.script.run`, always use object spreading `{...old, ...new}` to preserve fields that weren't part of the update payload (like `entry_date`).
+
+**Related Files:**
+- Code.gs: `setupDatabase()`, `saveDonation()`, `getInitialData()` (Data recovery logic)
+- Index.html: Header user display
+- js.html: State preservation logic in `submitDonation()` success handler.

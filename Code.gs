@@ -19,8 +19,20 @@ function getVersionInfo() {
     timestamp: new Date().toLocaleString('en-US', {
       month: 'short', day: 'numeric', year: 'numeric',
       hour: 'numeric', minute: '2-digit', hour12: true
-    })
+    }),
+    userEmail: getUserEmail()
   };
+}
+
+/**
+ * getUserEmail - Helper to get the logged in user's email.
+ */
+function getUserEmail() {
+  try {
+    return Session.getActiveUser().getEmail();
+  } catch (e) {
+    return 'Unknown User';
+  }
 }
 
 /**
@@ -102,7 +114,7 @@ function setupDatabase() {
     },
     {
       name: 'db_Donations',
-      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json', 'entry_date', 'deposit_date']
+      headers: ['txn_id', 'household_id', 'project_id', 'date', 'amount_cents', 'method', 'comments', 'meta_json', 'entry_date', 'deposit_date', 'logged_by']
     },
     { 
       name: 'db_Projects', 
@@ -116,26 +128,28 @@ function setupDatabase() {
       sheet = ss.insertSheet(config.name);
     }
     
-    // Reset permissions/content
-    sheet.clear();
-    
-    // Append headers
+    // Check if sheet is empty (no headers)
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(config.headers);
+    } else {
+      // Sheet exists and has data. Check for missing columns and add them to the header row.
+      const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      config.headers.forEach((expectedHeader, index) => {
+        if (!currentHeaders.includes(expectedHeader)) {
+          // Add missing header to the next available column
+          sheet.getRange(1, currentHeaders.length + 1).setValue(expectedHeader);
+          currentHeaders.push(expectedHeader); // Update local list to track newly added
+          console.log(`Added missing header "${expectedHeader}" to sheet "${config.name}"`);
+        }
+      });
     }
     
-    // IMPORTANT: You cannot freeze all rows. We need at least 2 rows to freeze 1.
+    // Ensure at least 2 rows exist for freezing
     if (sheet.getMaxRows() < 2) {
       sheet.insertRowAfter(1);
     }
     
     sheet.setFrozenRows(1);
-    
-    // Optional: Delete extra rows to keep it clean (leave 10 buffer rows)
-    const max = sheet.getMaxRows();
-    if (max > 20) {
-      sheet.deleteRows(11, max - 10);
-    }
   });
 
   // Remove default 'Sheet1' if it exists
@@ -230,17 +244,31 @@ function getInitialData() {
         return '';
     };
 
-    const donations = (donationRows || []).map(row => ({
-      txn_id: String(row[0]),
-      household_id: String(row[1]),
-      project_id: String(row[2]),
-      date: toIso(row[3]), // Donation Date
-      amount_cents: Number(row[4]),
-      method: String(row[5]),
-      comments: String(row[6] || ''),
-      entry_date: toIso(row[8]),    // When donation was logged (auto-set)
-      deposit_date: toIso(row[9])   // When deposit was made (internal use)
-    }));
+    const donations = (donationRows || []).map((row, i) => {
+      // Data Recovery Logic: If Col I (entry_date) is empty, try to extract from Col H (meta_json)
+      let entryDate = toIso(row[8]);
+      if (!entryDate && row[7]) {
+        try {
+          const meta = JSON.parse(row[7]);
+          if (meta.timestamp) entryDate = toIso(meta.timestamp);
+        } catch (e) {
+          // Not valid JSON or no timestamp, skip
+        }
+      }
+
+      return {
+        txn_id: String(row[0]),
+        household_id: String(row[1]),
+        project_id: String(row[2]),
+        date: toIso(row[3]), // Donation Date
+        amount_cents: Number(row[4]),
+        method: String(row[5]),
+        comments: String(row[6] || ''),
+        entry_date: entryDate,        // Recovered date
+        deposit_date: toIso(row[9]),  // When deposit was made (internal use)
+        logged_by: String(row[10] || '')
+      };
+    });
 
     return {
         status: 'success',
@@ -557,7 +585,10 @@ function saveDonation(payload) {
     // Deposit date is optional - can be set later for internal tracking
     const deposit_date = payload.deposit_date || '';
 
-    // Append row: txn_id | household_id | project_id | date | amount_cents | method | comments | meta_json | entry_date | deposit_date
+    // Capture the logged-in user's email for tracking
+    const logged_by = getUserEmail();
+
+    // Append row: txn_id | household_id | project_id | date | amount_cents | method | comments | meta_json | entry_date | deposit_date | logged_by
     sheet.appendRow([
       txn_id,
       payload.household_id,
@@ -568,10 +599,11 @@ function saveDonation(payload) {
       payload.comments || '',
       meta_json,
       entry_date,
-      deposit_date
+      deposit_date,
+      logged_by
     ]);
 
-    return { success: true, txn_id: txn_id, entry_date: entry_date };
+    return { success: true, txn_id: txn_id, entry_date: entry_date, logged_by: logged_by };
 
   } catch (error) {
     throw error;
@@ -905,7 +937,13 @@ function importDataInternal(payload) {
 
 /**
  * archiveEmail - Saves a copy of sent email using a Google Doc template.
+ * Uses Advanced Services (Drive API v3, Docs API v1) for better authorization control.
  * Copies the template and replaces placeholders with actual values.
+ * 
+ * @param {string} recipient - Email recipient(s)
+ * @param {string} subject - Email subject
+ * @param {string} htmlBody - HTML email body
+ * @param {string} householdName - Household name for file naming
  */
 function archiveEmail(recipient, subject, htmlBody, householdName) {
   // Check if archiving is enabled
@@ -919,38 +957,91 @@ function archiveEmail(recipient, subject, htmlBody, householdName) {
     return;
   }
 
+  // Pre-flight authorization checks
+  console.log('Starting email archive process...');
+  console.log('Performing authorization checks...');
+  
+  const driveAuth = checkDriveAuthorization();
+  const docsAuth = checkDocsAuthorization();
+  
+  if (!driveAuth.authorized) {
+    const error = new Error(`Drive API authorization failed: ${driveAuth.error || 'Unknown error'}`);
+    error.classification = classifyError(error);
+    console.error('❌ Drive API authorization check failed:', driveAuth.details);
+    console.error('Suggestion:', driveAuth.suggestion);
+    throw error;
+  }
+  
+  if (!docsAuth.authorized) {
+    const error = new Error(`Docs API authorization failed: ${docsAuth.error || 'Unknown error'}`);
+    error.classification = classifyError(error);
+    console.error('❌ Docs API authorization check failed:', docsAuth.details);
+    console.error('Suggestion:', docsAuth.suggestion);
+    throw error;
+  }
+  
+  console.log('✓ Authorization checks passed');
+
   try {
-    console.log('Starting email archive process...');
     console.log('Folder ID:', EMAIL_ARCHIVE_FOLDER_ID);
     console.log('Template ID:', ARCHIVE_TEMPLATE_ID);
 
-    // Get folder - this is where it's likely failing
-    console.log('Getting archive folder...');
-    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
-    console.log('✓ Folder accessed successfully');
+    // Step 1: Verify folder access using Advanced Services
+    console.log('Step 1: Verifying archive folder access...');
+    let folderResult;
+    try {
+      folderResult = driveGetFolder(EMAIL_ARCHIVE_FOLDER_ID);
+      console.log('✓ Folder verified:', folderResult.name);
+    } catch (e) {
+      const classification = classifyError(e);
+      console.error('❌ Failed to access archive folder');
+      console.error('Error type:', classification.type);
+      console.error('Details:', e.details || e.message);
+      throw new Error(`Cannot access archive folder: ${classification.userMessage}`);
+    }
 
+    // Step 2: Verify template file access
+    console.log('Step 2: Verifying template file access...');
+    let templateResult;
+    try {
+      templateResult = driveGetFile(ARCHIVE_TEMPLATE_ID, ['id', 'name', 'mimeType']);
+      console.log('✓ Template verified:', templateResult.file.name);
+      
+      // Verify it's a Google Doc
+      if (templateResult.file.mimeType !== 'application/vnd.google-apps.document') {
+        throw new Error('Template file is not a Google Doc');
+      }
+    } catch (e) {
+      const classification = classifyError(e);
+      console.error('❌ Failed to access template file');
+      console.error('Error type:', classification.type);
+      console.error('Details:', e.details || e.message);
+      throw new Error(`Cannot access template file: ${classification.userMessage}`);
+    }
+
+    // Step 3: Prepare document name
     const timestamp = Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd');
     const timeStr = Utilities.formatDate(new Date(), 'America/New_York', 'h:mm a');
     const safeHousehold = (householdName || 'Unknown').replace(/[^a-zA-Z0-9 _-]/g, '').substring(0, 50);
     const docName = `${timestamp} - ${safeHousehold} - Thank You`;
-    console.log('Document name:', docName);
+    console.log('Step 3: Document name prepared:', docName);
 
-    // Copy template to archive folder
-    console.log('Getting template file...');
-    const templateFile = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
-    console.log('✓ Template accessed successfully');
+    // Step 4: Copy template using Advanced Services
+    console.log('Step 4: Copying template file...');
+    let copyResult;
+    try {
+      copyResult = driveCopyFile(ARCHIVE_TEMPLATE_ID, docName, EMAIL_ARCHIVE_FOLDER_ID);
+      console.log('✓ Copy created with ID:', copyResult.fileId);
+    } catch (e) {
+      const classification = classifyError(e);
+      console.error('❌ Failed to copy template file');
+      console.error('Error type:', classification.type);
+      console.error('Details:', e.details || e.message);
+      throw new Error(`Cannot copy template file: ${classification.userMessage}`);
+    }
 
-    console.log('Creating copy...');
-    const newFile = templateFile.makeCopy(docName, folder);
-    console.log('✓ Copy created with ID:', newFile.getId());
-
-    // Open the copy and replace placeholders
-    console.log('Opening document...');
-    const doc = DocumentApp.openById(newFile.getId());
-    const body = doc.getBody();
-    console.log('✓ Document opened');
-
-    // Convert HTML to plain text for the body
+    // Step 5: Convert HTML to plain text for the body
+    console.log('Step 5: Converting HTML to plain text...');
     const plainBody = htmlBody
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<\/p>/gi, '\n\n')
@@ -961,51 +1052,147 @@ function archiveEmail(recipient, subject, htmlBody, householdName) {
       .replace(/&gt;/g, '>')
       .trim();
 
-    // Replace placeholders
-    console.log('Replacing placeholders...');
-    body.replaceText('\\{\\{TO\\}\\}', recipient);
-    body.replaceText('\\{\\{SUBJECT\\}\\}', subject);
-    body.replaceText('\\{\\{DATE\\}\\}', timestamp + ' at ' + timeStr);
-    body.replaceText('\\{\\{EMAIL_BODY\\}\\}', plainBody);
-    console.log('✓ Placeholders replaced');
+    // Step 6: Replace placeholders using Docs API batchUpdate
+    console.log('Step 6: Replacing placeholders in document...');
+    try {
+      // Create batch update requests for all placeholder replacements
+      const requests = [
+        {
+          replaceAllText: {
+            containsText: {
+              text: '{{TO}}',
+              matchCase: false
+            },
+            replaceText: recipient || ''
+          }
+        },
+        {
+          replaceAllText: {
+            containsText: {
+              text: '{{SUBJECT}}',
+              matchCase: false
+            },
+            replaceText: subject || ''
+          }
+        },
+        {
+          replaceAllText: {
+            containsText: {
+              text: '{{DATE}}',
+              matchCase: false
+            },
+            replaceText: timestamp + ' at ' + timeStr
+          }
+        },
+        {
+          replaceAllText: {
+            containsText: {
+              text: '{{EMAIL_BODY}}',
+              matchCase: false
+            },
+            replaceText: plainBody
+          }
+        }
+      ];
+      
+      const updateResult = docsBatchUpdate(copyResult.fileId, requests);
+      console.log('✓ Placeholders replaced successfully');
+      console.log('Document revision ID:', updateResult.revisionId);
+    } catch (e) {
+      const classification = classifyError(e);
+      console.error('❌ Failed to replace placeholders');
+      console.error('Error type:', classification.type);
+      console.error('Details:', e.details || e.message);
+      // Don't throw - document was created, just placeholder replacement failed
+      console.warn('⚠️  Document created but placeholder replacement failed. Manual editing may be required.');
+    }
 
-    console.log('Saving document...');
-    doc.saveAndClose();
-    console.log('✓ Email archived successfully!');
+    console.log('✅ Email archived successfully!');
+    console.log('Document ID:', copyResult.fileId);
+    console.log('Document name:', docName);
 
   } catch (error) {
-    // Log detailed error information
-    console.error('Email archiving failed at step:', error.message);
-    console.error('Error stack:', error.stack);
-    console.error('Error name:', error.name);
+    // Enhanced error handling with classification
+    const classification = error.classification || classifyError(error);
+    
+    console.error('='.repeat(50));
+    console.error('❌ Email archiving failed');
+    console.error('='.repeat(50));
+    console.error('Error type:', classification.type);
+    console.error('Error message:', error.message || classification.userMessage);
+    console.error('Recoverable:', classification.recoverable ? 'Yes' : 'No');
+    console.error('Suggestion:', classification.suggestion);
+    
+    if (error.details) {
+      console.error('Details:', error.details);
+    }
+    if (error.stack) {
+      console.error('Stack trace:', error.stack);
+    }
+    console.error('='.repeat(50));
 
-    // Re-throw with more context
-    throw new Error('Email archiving failed: ' + error.message + '. Check Drive/Docs permissions for deployment.');
+    // Re-throw with structured error information
+    const enhancedError = new Error(`Email archiving failed: ${classification.userMessage}`);
+    enhancedError.classification = classification;
+    enhancedError.originalError = error;
+    throw enhancedError;
   }
 }
 
 /**
- * DEBUG: Test the email archive function
+ * DEBUG: Test the email archive function using Advanced Services
  * Run this from the Apps Script editor to test archive creation
  */
 function debug_testEmailArchive() {
-  console.log("Testing email archive functionality...");
+  console.log("=".repeat(50));
+  console.log("Testing Email Archive Functionality (Advanced Services)");
+  console.log("=".repeat(50));
 
   try {
     // Test 1: Check constants
-    console.log("EMAIL_ARCHIVE_FOLDER_ID: " + EMAIL_ARCHIVE_FOLDER_ID);
-    console.log("ARCHIVE_TEMPLATE_ID: " + ARCHIVE_TEMPLATE_ID);
+    console.log("\n1. Checking configuration constants...");
+    console.log("   EMAIL_ARCHIVE_FOLDER_ID: " + EMAIL_ARCHIVE_FOLDER_ID);
+    console.log("   ARCHIVE_TEMPLATE_ID: " + ARCHIVE_TEMPLATE_ID);
+    console.log("   ARCHIVE_ENABLED: " + ARCHIVE_ENABLED);
 
-    // Test 2: Check folder access
-    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
-    console.log("✓ Archive folder found: " + folder.getName());
+    // Test 2: Check authorization
+    console.log("\n2. Checking authorization...");
+    const authCheck = checkAllAuthorizations();
+    if (!authCheck.allAuthorized) {
+      console.error("❌ Authorization check failed. Run debug_triggerAuth() first.");
+      return;
+    }
+    console.log("   ✅ All authorizations verified");
 
-    // Test 3: Check template access
-    const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
-    console.log("✓ Template found: " + template.getName());
+    // Test 3: Check folder access using Advanced Services
+    console.log("\n3. Testing folder access (Advanced Services)...");
+    try {
+      const folderResult = driveGetFolder(EMAIL_ARCHIVE_FOLDER_ID);
+      console.log("   ✅ Archive folder found: " + folderResult.name);
+      console.log("   Folder ID: " + folderResult.id);
+    } catch (e) {
+      console.error("   ❌ Failed to access folder:", e.message || e.details);
+      throw e;
+    }
 
-    // Test 4: Try to create a test archive
-    console.log("\nCreating test archive...");
+    // Test 4: Check template access using Advanced Services
+    console.log("\n4. Testing template file access (Advanced Services)...");
+    try {
+      const templateResult = driveGetFile(ARCHIVE_TEMPLATE_ID, ['id', 'name', 'mimeType']);
+      console.log("   ✅ Template found: " + templateResult.file.name);
+      console.log("   Template ID: " + templateResult.file.id);
+      console.log("   MIME type: " + templateResult.file.mimeType);
+      
+      if (templateResult.file.mimeType !== 'application/vnd.google-apps.document') {
+        console.warn("   ⚠️  Warning: Template is not a Google Doc");
+      }
+    } catch (e) {
+      console.error("   ❌ Failed to access template:", e.message || e.details);
+      throw e;
+    }
+
+    // Test 5: Try to create a test archive
+    console.log("\n5. Creating test archive...");
     archiveEmail(
       "test@example.com",
       "Test Subject",
@@ -1013,13 +1200,27 @@ function debug_testEmailArchive() {
       "Test Household"
     );
 
+    console.log("\n" + "=".repeat(50));
     console.log("✅ Test archive created successfully!");
     console.log("Check your archive folder for: " + new Date().toISOString().split('T')[0] + " - Test Household - Thank You");
+    console.log("=".repeat(50));
 
   } catch (e) {
+    console.error("\n" + "=".repeat(50));
     console.error("❌ Archive test failed:");
-    console.error(e.toString());
-    console.error("Stack: " + e.stack);
+    console.error("=".repeat(50));
+    console.error("Error:", e.message || e.toString());
+    if (e.classification) {
+      console.error("Error type:", e.classification.type);
+      console.error("Suggestion:", e.classification.suggestion);
+    }
+    if (e.details) {
+      console.error("Details:", e.details);
+    }
+    if (e.stack) {
+      console.error("Stack:", e.stack);
+    }
+    console.error("=".repeat(50));
   }
 }
 
@@ -1083,61 +1284,183 @@ function sendThankYouEmail(payload) {
 
 /**
  * Run this function from the editor to trigger the authorization prompt.
- * It accesses all services to ensure ALL OAuth scopes are granted.
+ * It accesses all services (both built-in and Advanced Services) to ensure ALL OAuth scopes are granted.
  * This is especially important after adding new scopes to appsscript.json.
+ * 
+ * Updated to test Advanced Services APIs for better authorization control.
  */
 function debug_triggerAuth() {
-  console.log("Triggering authorization for all OAuth scopes...");
+  console.log("=".repeat(50));
+  console.log("Triggering Authorization for All OAuth Scopes");
+  console.log("=".repeat(50));
   console.log("This will prompt you to authorize if you haven't already.");
+  console.log("");
+
+  const results = {
+    builtInServices: {},
+    advancedServices: {},
+    allPassed: true
+  };
 
   try {
-    // Access each service to trigger OAuth for ALL scopes
-    console.log("- Checking MailApp...");
-    MailApp.getRemainingDailyQuota();
+    // Test built-in services (for backward compatibility)
+    console.log("Testing Built-in Services:");
+    console.log("-".repeat(50));
+    
+    console.log("1. Checking MailApp...");
+    try {
+      MailApp.getRemainingDailyQuota();
+      results.builtInServices.mailApp = { status: 'OK' };
+      console.log("   ✅ MailApp authorized");
+    } catch (e) {
+      results.builtInServices.mailApp = { status: 'FAIL', error: e.message };
+      results.allPassed = false;
+      console.error("   ❌ MailApp authorization failed:", e.message);
+    }
 
-    console.log("- Checking GmailApp...");
-    GmailApp.getAliases();
+    console.log("2. Checking GmailApp...");
+    try {
+      GmailApp.getAliases();
+      results.builtInServices.gmailApp = { status: 'OK' };
+      console.log("   ✅ GmailApp authorized");
+    } catch (e) {
+      results.builtInServices.gmailApp = { status: 'FAIL', error: e.message };
+      results.allPassed = false;
+      console.error("   ❌ GmailApp authorization failed:", e.message);
+    }
 
-    console.log("- Checking DriveApp...");
-    DriveApp.getStorageLimit();
-    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
-    console.log("  ✓ Archive folder accessible: " + folder.getName());
+    console.log("3. Checking DriveApp...");
+    try {
+      DriveApp.getStorageLimit();
+      const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
+      results.builtInServices.driveApp = { status: 'OK', folderName: folder.getName() };
+      console.log("   ✅ DriveApp authorized");
+      console.log("   ✓ Archive folder accessible: " + folder.getName());
+    } catch (e) {
+      results.builtInServices.driveApp = { status: 'FAIL', error: e.message };
+      results.allPassed = false;
+      console.error("   ❌ DriveApp authorization failed:", e.message);
+    }
 
-    console.log("- Checking DocumentApp...");
-    const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
-    const doc = DocumentApp.openById(ARCHIVE_TEMPLATE_ID);
-    console.log("  ✓ Archive template accessible: " + template.getName());
+    console.log("4. Checking DocumentApp...");
+    try {
+      const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
+      const doc = DocumentApp.openById(ARCHIVE_TEMPLATE_ID);
+      results.builtInServices.documentApp = { status: 'OK', templateName: template.getName() };
+      console.log("   ✅ DocumentApp authorized");
+      console.log("   ✓ Archive template accessible: " + template.getName());
+    } catch (e) {
+      results.builtInServices.documentApp = { status: 'FAIL', error: e.message };
+      results.allPassed = false;
+      console.error("   ❌ DocumentApp authorization failed:", e.message);
+    }
 
-    console.log("- Checking SpreadsheetApp...");
-    const ss = getDatasource();
-    console.log("  ✓ Connected to: " + ss.getName());
+    console.log("5. Checking SpreadsheetApp...");
+    try {
+      const ss = getDatasource();
+      results.builtInServices.spreadsheetApp = { status: 'OK', sheetName: ss ? ss.getName() : 'N/A' };
+      console.log("   ✅ SpreadsheetApp authorized");
+      if (ss) {
+        console.log("   ✓ Connected to: " + ss.getName());
+      }
+    } catch (e) {
+      results.builtInServices.spreadsheetApp = { status: 'FAIL', error: e.message };
+      results.allPassed = false;
+      console.error("   ❌ SpreadsheetApp authorization failed:", e.message);
+    }
+
+    // Test Advanced Services (new approach)
+    console.log("");
+    console.log("Testing Advanced Services:");
+    console.log("-".repeat(50));
+    
+    console.log("6. Checking Drive API v3...");
+    const driveAuth = checkDriveAuthorization();
+    results.advancedServices.drive = driveAuth;
+    if (driveAuth.authorized) {
+      console.log("   ✅ Drive API v3 authorized");
+    } else {
+      console.error("   ❌ Drive API v3 authorization failed:", driveAuth.error);
+      results.allPassed = false;
+    }
+
+    console.log("7. Checking Docs API v1...");
+    const docsAuth = checkDocsAuthorization();
+    results.advancedServices.docs = docsAuth;
+    if (docsAuth.authorized) {
+      console.log("   ✅ Docs API v1 authorized");
+    } else {
+      console.error("   ❌ Docs API v1 authorization failed:", docsAuth.error);
+      results.allPassed = false;
+    }
+
+    // Test Advanced Services with actual operations
+    console.log("8. Testing Drive API operations...");
+    try {
+      const folderResult = driveGetFolder(EMAIL_ARCHIVE_FOLDER_ID);
+      console.log("   ✅ Drive API folder access verified: " + folderResult.name);
+      results.advancedServices.driveOperations = { status: 'OK' };
+    } catch (e) {
+      console.error("   ❌ Drive API operations failed:", e.message || e.details);
+      results.advancedServices.driveOperations = { status: 'FAIL', error: e.message || e.details };
+      results.allPassed = false;
+    }
+
+    console.log("9. Testing Docs API operations...");
+    try {
+      const docResult = docsGetDocument(ARCHIVE_TEMPLATE_ID);
+      console.log("   ✅ Docs API document access verified: " + docResult.title);
+      results.advancedServices.docsOperations = { status: 'OK' };
+    } catch (e) {
+      console.error("   ❌ Docs API operations failed:", e.message || e.details);
+      results.advancedServices.docsOperations = { status: 'FAIL', error: e.message || e.details };
+      results.allPassed = false;
+    }
 
     console.log("");
-    console.log("✅ Authorization complete!");
-    console.log("All OAuth scopes have been approved.");
-    console.log("Drive and Docs access verified successfully.");
+    console.log("=".repeat(50));
+    if (results.allPassed) {
+      console.log("✅ AUTHORIZATION COMPLETE!");
+      console.log("All OAuth scopes have been approved.");
+      console.log("Both built-in services and Advanced Services are working.");
+    } else {
+      console.error("❌ AUTHORIZATION INCOMPLETE");
+      console.error("Some services failed authorization. Please review errors above.");
+      console.error("You may need to run this function again or check the OAuth consent screen.");
+    }
+    console.log("=".repeat(50));
 
   } catch (e) {
-    console.error("Authorization error: " + e.toString());
+    console.error("");
+    console.error("=".repeat(50));
+    console.error("❌ Authorization error:", e.toString());
+    console.error("=".repeat(50));
     console.log("Please try running this function again.");
     console.log("If the error persists, check the OAuth consent screen.");
+    console.log("You may need to revoke and re-authorize all permissions.");
+    results.allPassed = false;
   }
+  
+  return results;
 }
 
 /**
  * OAuth Preflight Check
  * Run this BEFORE creating production deployments to verify all OAuth scopes work.
  * Returns a detailed status report of each scope.
+ * 
+ * Updated to test Advanced Services APIs for better authorization control.
  *
  * Usage: Run from Apps Script editor before deployment
  * Purpose: Catch OAuth issues before they affect production web app
  */
 function oauth_preflight_check() {
-  console.log("🔍 OAuth Preflight Check");
+  console.log("🔍 OAuth Preflight Check (Advanced Services)");
   console.log("=".repeat(50));
 
   const results = {
     scopes: [],
+    advancedServices: [],
     allPassed: true,
     timestamp: new Date().toISOString()
   };
@@ -1148,6 +1471,7 @@ function oauth_preflight_check() {
     const quota = MailApp.getRemainingDailyQuota();
     results.scopes.push({
       name: 'script.send_mail',
+      service: 'MailApp (built-in)',
       status: 'OK',
       details: 'Daily email quota: ' + quota
     });
@@ -1155,6 +1479,7 @@ function oauth_preflight_check() {
   } catch(e) {
     results.scopes.push({
       name: 'script.send_mail',
+      service: 'MailApp (built-in)',
       status: 'FAIL',
       error: e.toString()
     });
@@ -1168,6 +1493,7 @@ function oauth_preflight_check() {
     const drafts = GmailApp.getDrafts();
     results.scopes.push({
       name: 'gmail.readonly',
+      service: 'GmailApp (built-in)',
       status: 'OK',
       details: 'Draft count: ' + drafts.length
     });
@@ -1175,6 +1501,7 @@ function oauth_preflight_check() {
   } catch(e) {
     results.scopes.push({
       name: 'gmail.readonly',
+      service: 'GmailApp (built-in)',
       status: 'FAIL',
       error: e.toString()
     });
@@ -1182,47 +1509,64 @@ function oauth_preflight_check() {
     console.error("   ❌ FAIL - " + e.toString());
   }
 
-  // Test 3: DriveApp (drive)
-  console.log("\n3. Testing DriveApp (drive)...");
-  try {
-    const folder = DriveApp.getFolderById(EMAIL_ARCHIVE_FOLDER_ID);
-    const folderName = folder.getName();
-    results.scopes.push({
-      name: 'drive',
-      status: 'OK',
-      details: 'Archive folder accessible: ' + folderName
-    });
-    console.log("   ✅ OK - Archive folder accessible: " + folderName);
-  } catch(e) {
-    results.scopes.push({
-      name: 'drive',
-      status: 'FAIL',
-      error: e.toString()
-    });
+  // Test 3: Drive API v3 (Advanced Service)
+  console.log("\n3. Testing Drive API v3 (Advanced Service)...");
+  const driveAuth = checkDriveAuthorization();
+  results.advancedServices.push({
+    name: 'drive',
+    service: 'Drive API v3',
+    status: driveAuth.authorized ? 'OK' : 'FAIL',
+    authorized: driveAuth.authorized,
+    error: driveAuth.error || null,
+    details: driveAuth.authorized ? 'Drive API accessible' : driveAuth.details
+  });
+  if (driveAuth.authorized) {
+    try {
+      const folderResult = driveGetFolder(EMAIL_ARCHIVE_FOLDER_ID);
+      console.log("   ✅ OK - Drive API authorized");
+      console.log("   ✓ Archive folder accessible: " + folderResult.name);
+      results.advancedServices[results.advancedServices.length - 1].details = 
+        'Archive folder accessible: ' + folderResult.name;
+    } catch(e) {
+      console.error("   ⚠️  Authorization OK but folder access failed: " + (e.message || e.details));
+      results.advancedServices[results.advancedServices.length - 1].warning = e.message || e.details;
+    }
+  } else {
+    console.error("   ❌ FAIL - " + (driveAuth.details || driveAuth.error));
     results.allPassed = false;
-    console.error("   ❌ FAIL - " + e.toString());
   }
 
-  // Test 4: DocumentApp (documents)
-  console.log("\n4. Testing DocumentApp (documents)...");
-  try {
-    const template = DriveApp.getFileById(ARCHIVE_TEMPLATE_ID);
-    const doc = DocumentApp.openById(ARCHIVE_TEMPLATE_ID);
-    const templateName = template.getName();
-    results.scopes.push({
-      name: 'documents',
-      status: 'OK',
-      details: 'Archive template accessible: ' + templateName
-    });
-    console.log("   ✅ OK - Archive template accessible: " + templateName);
-  } catch(e) {
-    results.scopes.push({
-      name: 'documents',
-      status: 'FAIL',
-      error: e.toString()
-    });
+  // Test 4: Docs API v1 (Advanced Service)
+  console.log("\n4. Testing Docs API v1 (Advanced Service)...");
+  const docsAuth = checkDocsAuthorization();
+  results.advancedServices.push({
+    name: 'documents',
+    service: 'Docs API v1',
+    status: docsAuth.authorized ? 'OK' : 'FAIL',
+    authorized: docsAuth.authorized,
+    error: docsAuth.error || null,
+    details: docsAuth.authorized ? 'Docs API accessible' : docsAuth.details
+  });
+  if (docsAuth.authorized) {
+    try {
+      const docResult = docsGetDocument(ARCHIVE_TEMPLATE_ID);
+      console.log("   ✅ OK - Docs API authorized");
+      console.log("   ✓ Archive template accessible: " + docResult.title);
+      results.advancedServices[results.advancedServices.length - 1].details = 
+        'Archive template accessible: ' + docResult.title;
+    } catch(e) {
+      const classification = classifyError(e);
+      if (classification.type === 'NOT_FOUND') {
+        console.warn("   ⚠️  Authorization OK but template not found (check ARCHIVE_TEMPLATE_ID)");
+        results.advancedServices[results.advancedServices.length - 1].warning = e.message || e.details;
+      } else {
+        console.error("   ⚠️  Authorization OK but template access failed: " + (e.message || e.details));
+        results.advancedServices[results.advancedServices.length - 1].warning = e.message || e.details;
+      }
+    }
+  } else {
+    console.error("   ❌ FAIL - " + (docsAuth.details || docsAuth.error));
     results.allPassed = false;
-    console.error("   ❌ FAIL - " + e.toString());
   }
 
   // Test 5: SpreadsheetApp (spreadsheets)
@@ -1232,6 +1576,7 @@ function oauth_preflight_check() {
     const name = ss ? ss.getName() : 'Not connected';
     results.scopes.push({
       name: 'spreadsheets',
+      service: 'SpreadsheetApp (built-in)',
       status: 'OK',
       details: 'Connected to: ' + name
     });
@@ -1239,6 +1584,7 @@ function oauth_preflight_check() {
   } catch(e) {
     results.scopes.push({
       name: 'spreadsheets',
+      service: 'SpreadsheetApp (built-in)',
       status: 'FAIL',
       error: e.toString()
     });
@@ -1248,19 +1594,752 @@ function oauth_preflight_check() {
 
   // Summary
   console.log("\n" + "=".repeat(50));
+  console.log("Preflight Check Summary:");
+  console.log("-".repeat(50));
+  console.log("Built-in Services: " + results.scopes.filter(s => s.status === 'OK').length + "/" + results.scopes.length + " passed");
+  console.log("Advanced Services: " + results.advancedServices.filter(s => s.status === 'OK').length + "/" + results.advancedServices.length + " passed");
+  console.log("-".repeat(50));
+  
   if (results.allPassed) {
     console.log("✅ PREFLIGHT CHECK PASSED");
     console.log("All critical OAuth scopes are authorized.");
+    console.log("Both built-in services and Advanced Services are working.");
     console.log("Safe to create production deployment.");
   } else {
     console.error("❌ PREFLIGHT CHECK FAILED");
     console.error("Some OAuth scopes are not authorized.");
     console.error("Fix authorization issues before deployment.");
+    console.error("Run debug_triggerAuth() to authorize all scopes.");
   }
   console.log("=".repeat(50));
 
   // Return structured results for programmatic use
   return results;
+}
+
+// ============================================================================
+// PHASE 4: TESTING FUNCTIONS
+// ============================================================================
+
+/**
+ * Comprehensive test of all Advanced Services operations
+ * Tests Drive API v3 and Docs API v1 with actual operations
+ * @returns {Object} Test results with detailed status for each operation
+ */
+function testAdvancedServices() {
+  console.log("=".repeat(50));
+  console.log("Advanced Services Comprehensive Test");
+  console.log("=".repeat(50));
+  
+  const results = {
+    timestamp: new Date().toISOString(),
+    drive: {},
+    docs: {},
+    allPassed: true,
+    initialization: {}
+  };
+
+  // Test Initialization
+  console.log("\n0. Checking API Initialization...");
+  results.initialization.drive = (typeof Drive !== 'undefined');
+  results.initialization.docs = (typeof Docs !== 'undefined');
+  
+  if (results.initialization.drive) {
+    console.log("   ✅ Drive API object is defined");
+  } else {
+    console.error("   ❌ Drive API object is UNDEFINED. Is it enabled in Services?");
+    results.allPassed = false;
+  }
+  
+  if (results.initialization.docs) {
+    console.log("   ✅ Docs API object is defined");
+  } else {
+    console.error("   ❌ Docs API object is UNDEFINED. Is it enabled in Services?");
+    results.allPassed = false;
+  }
+  
+  // Test Drive API operations
+  console.log("\nTesting Drive API v3 Operations:");
+  console.log("-".repeat(50));
+  
+  console.log("1. Testing folder access...");
+  try {
+    const folderResult = driveGetFolder(EMAIL_ARCHIVE_FOLDER_ID);
+    results.drive.folderAccess = { status: 'OK', folderName: folderResult.name };
+    console.log("   ✅ Folder accessed: " + folderResult.name);
+  } catch (e) {
+    results.drive.folderAccess = { status: 'FAIL', error: e.message || e.details };
+    results.allPassed = false;
+    console.error("   ❌ Folder access failed:", e.message || e.details);
+  }
+  
+  console.log("2. Testing file access...");
+  try {
+    const fileResult = driveGetFile(ARCHIVE_TEMPLATE_ID, ['id', 'name', 'mimeType']);
+    results.drive.fileAccess = { status: 'OK', fileName: fileResult.file.name };
+    console.log("   ✅ File accessed: " + fileResult.file.name);
+    console.log("   MIME type: " + fileResult.file.mimeType);
+  } catch (e) {
+    results.drive.fileAccess = { status: 'FAIL', error: e.message || e.details };
+    results.allPassed = false;
+    console.error("   ❌ File access failed:", e.message || e.details);
+  }
+  
+  console.log("3. Testing file copy operation...");
+  try {
+    const testFileName = 'TEST_' + new Date().getTime() + ' - Advanced Services Test';
+    const copyResult = driveCopyFile(ARCHIVE_TEMPLATE_ID, testFileName, EMAIL_ARCHIVE_FOLDER_ID);
+    results.drive.fileCopy = { status: 'OK', copiedFileId: copyResult.fileId };
+    console.log("   ✅ File copied successfully");
+    console.log("   Copied file ID: " + copyResult.fileId);
+    
+    // Clean up test file
+    try {
+      Drive.Files.remove(copyResult.fileId, {
+        supportsAllDrives: true
+      });
+      console.log("   ✓ Test file cleaned up");
+    } catch (cleanupError) {
+      console.warn("   ⚠️  Could not clean up test file (ID: " + copyResult.fileId + ")");
+    }
+  } catch (e) {
+    results.drive.fileCopy = { status: 'FAIL', error: e.message || e.details };
+    results.allPassed = false;
+    console.error("   ❌ File copy failed:", e.message || e.details);
+  }
+  
+  // Test Docs API operations
+  console.log("\nTesting Docs API v1 Operations:");
+  console.log("-".repeat(50));
+  
+  console.log("1. Testing document retrieval...");
+  try {
+    const docResult = docsGetDocument(ARCHIVE_TEMPLATE_ID);
+    results.docs.documentRetrieval = { status: 'OK', documentTitle: docResult.title };
+    console.log("   ✅ Document retrieved: " + docResult.title);
+    console.log("   Document ID: " + docResult.documentId);
+  } catch (e) {
+    results.docs.documentRetrieval = { status: 'FAIL', error: e.message || e.details };
+    results.allPassed = false;
+    console.error("   ❌ Document retrieval failed:", e.message || e.details);
+  }
+  
+  console.log("2. Testing text replacement...");
+  try {
+    // Create a test copy first
+    const testFileName = 'TEST_' + new Date().getTime() + ' - Text Replacement Test';
+    const copyResult = driveCopyFile(ARCHIVE_TEMPLATE_ID, testFileName, EMAIL_ARCHIVE_FOLDER_ID);
+    
+    // Try to replace text
+    const replaceResult = docsReplaceText(copyResult.fileId, '{{TEST}}', 'Replacement Successful');
+    results.docs.textReplacement = { status: 'OK', revisionId: replaceResult.revisionId };
+    console.log("   ✅ Text replacement successful");
+    console.log("   Revision ID: " + replaceResult.revisionId);
+    
+    // Clean up test file
+    try {
+      Drive.Files.remove(copyResult.fileId, {
+        supportsAllDrives: true
+      });
+      console.log("   ✓ Test file cleaned up");
+    } catch (cleanupError) {
+      console.warn("   ⚠️  Could not clean up test file (ID: " + copyResult.fileId + ")");
+    }
+  } catch (e) {
+    results.docs.textReplacement = { status: 'FAIL', error: e.message || e.details };
+    results.allPassed = false;
+    console.error("   ❌ Text replacement failed:", e.message || e.details);
+  }
+  
+  // Summary
+  console.log("\n" + "=".repeat(50));
+  console.log("Test Summary:");
+  console.log("-".repeat(50));
+  const driveTests = Object.keys(results.drive).length;
+  const drivePassed = Object.values(results.drive).filter(t => t.status === 'OK').length;
+  const docsTests = Object.keys(results.docs).length;
+  const docsPassed = Object.values(results.docs).filter(t => t.status === 'OK').length;
+  
+  console.log("Drive API: " + drivePassed + "/" + driveTests + " tests passed");
+  console.log("Docs API: " + docsPassed + "/" + docsTests + " tests passed");
+  console.log("-".repeat(50));
+  
+  if (results.allPassed) {
+    console.log("✅ ALL TESTS PASSED");
+    console.log("Advanced Services are working correctly.");
+  } else {
+    console.error("❌ SOME TESTS FAILED");
+    console.error("Review errors above and fix authorization issues.");
+  }
+  console.log("=".repeat(50));
+  
+  return results;
+}
+
+// ============================================================================
+// PHASE 1: AUTHORIZATION INFRASTRUCTURE
+// ============================================================================
+
+/**
+ * Classifies errors into categories for better error handling
+ * @param {Error|string} error - The error object or string to classify
+ * @returns {Object} Classification with type, recoverable flag, and suggestion
+ */
+function classifyError(error) {
+  // Handle case where error might be a string (common in Apps Script)
+  const errorStr = error ? error.toString() : '';
+  const msg = (error.message || errorStr || '').toLowerCase();
+  
+  // LOG THE RAW ERROR FOR DEBUGGING
+  console.warn('Classifying error. Raw message:', errorStr);
+  if (error && typeof error === 'object') {
+    try {
+      console.warn('Error properties:', JSON.stringify(Object.getOwnPropertyNames(error)));
+    } catch (e) {}
+  }
+
+  const code = error.code || (errorStr.match(/\d{3}/) ? parseInt(errorStr.match(/\d{3}/)[0]) : null);
+  
+  // Authorization errors
+  if (code === 401 || code === 403 || 
+      msg.includes('permission') || 
+      msg.includes('authorization') || 
+      msg.includes('access denied') ||
+      msg.includes('insufficient permission') ||
+      msg.includes('not authorized') ||
+      msg.includes('consent')) {
+    return {
+      type: 'AUTHORIZATION',
+      recoverable: true,
+      suggestion: 'Run debug_triggerAuth() to re-authorize all scopes',
+      userMessage: 'Authorization required. Please grant permissions for Drive and Docs access.'
+    };
+  }
+  
+  // API/Server errors (MATCHING "server error" specifically now)
+  if (code === 500 || 
+      code === 503 ||
+      msg.includes('server error') ||
+      msg.includes('service unavailable') ||
+      msg.includes('internal error') ||
+      msg.includes('we\'re sorry')) {
+    return {
+      type: 'API_ERROR',
+      recoverable: false,
+      suggestion: 'This is a Google API server error. This often happens if the API is disabled in Cloud Console or if there is a temporary Google outage.',
+      userMessage: 'Google API service returned a server error (500). Please try again later or check API settings.'
+    };
+  }
+  
+  // Not found errors
+  if (code === 404 || 
+      msg.includes('not found') ||
+      msg.includes('file not found') ||
+      msg.includes('folder not found')) {
+    return {
+      type: 'NOT_FOUND',
+      recoverable: false,
+      suggestion: 'Verify the file/folder IDs are correct in Code.gs constants',
+      userMessage: 'File or folder not found. Please check configuration.'
+    };
+  }
+  
+  // Rate limit errors
+  if (code === 429 || 
+      msg.includes('rate limit') ||
+      msg.includes('quota exceeded') ||
+      msg.includes('too many requests')) {
+    return {
+      type: 'RATE_LIMIT',
+      recoverable: true,
+      suggestion: 'Wait a few minutes and retry. Consider implementing exponential backoff.',
+      userMessage: 'Too many requests. Please wait a moment and try again.'
+    };
+  }
+  
+  // Network/timeout errors
+  if (msg.includes('timeout') ||
+      msg.includes('network') ||
+      msg.includes('connection') ||
+      msg.includes('failed to fetch')) {
+    return {
+      type: 'NETWORK_ERROR',
+      recoverable: true,
+      suggestion: 'Check network connection and retry',
+      userMessage: 'Network error. Please check your connection and try again.'
+    };
+  }
+  
+  // Default: unknown error
+  return {
+    type: 'UNKNOWN',
+    recoverable: false,
+    suggestion: 'The error was not recognized. Please check the raw log output above.',
+    userMessage: 'An unexpected error occurred (' + errorStr.substring(0, 50) + '...).'
+  };
+}
+
+/**
+ * Checks if Drive API authorization is available
+ * @returns {Object} Authorization status with authorized flag and error details if any
+ */
+function checkDriveAuthorization() {
+  try {
+    // Attempt a minimal Drive API call to verify authorization
+    Drive.Files.list({maxResults: 1, fields: 'files(id)'});
+    return {
+      authorized: true,
+      service: 'Drive API v3',
+      timestamp: new Date().toISOString()
+    };
+  } catch (e) {
+    const classification = classifyError(e);
+    return {
+      authorized: false,
+      service: 'Drive API v3',
+      error: classification.type,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion,
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Checks if Docs API authorization is available
+ * @returns {Object} Authorization status with authorized flag and error details if any
+ */
+function checkDocsAuthorization() {
+  try {
+    // Attempt a minimal Docs API call to verify authorization
+    // We'll use a test document ID - if it fails with auth error, we know it's authorization
+    // If it fails with 404, that's fine - it means auth works
+    try {
+      Docs.Documents.get('test', {fields: 'documentId'});
+    } catch (e) {
+      // If it's a 404, that's fine - auth is working
+      if (e.message && e.message.includes('404')) {
+        return {
+          authorized: true,
+          service: 'Docs API v1',
+          timestamp: new Date().toISOString()
+        };
+      }
+      // If it's auth error, re-throw to be caught below
+      if (e.message && (e.message.includes('permission') || e.message.includes('authorization') || e.message.includes('401') || e.message.includes('403'))) {
+        throw e;
+      }
+      // Other errors might be API issues, but let's assume auth works if not explicitly denied
+      return {
+        authorized: true,
+        service: 'Docs API v1',
+        note: 'Authorization check passed (test document not found, but API accessible)',
+        timestamp: new Date().toISOString()
+      };
+    }
+    return {
+      authorized: true,
+      service: 'Docs API v1',
+      timestamp: new Date().toISOString()
+    };
+  } catch (e) {
+    const classification = classifyError(e);
+    return {
+      authorized: false,
+      service: 'Docs API v1',
+      error: classification.type,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion,
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Comprehensive authorization check for all required scopes
+ * @returns {Object} Status report for all authorization checks
+ */
+function checkAllAuthorizations() {
+  console.log('🔍 Checking all OAuth authorizations...');
+  console.log('='.repeat(50));
+  
+  const results = {
+    timestamp: new Date().toISOString(),
+    checks: {},
+    allAuthorized: true
+  };
+  
+  // Check Drive API
+  console.log('\n1. Checking Drive API authorization...');
+  results.checks.drive = checkDriveAuthorization();
+  if (results.checks.drive.authorized) {
+    console.log('   ✅ Drive API authorized');
+  } else {
+    console.error('   ❌ Drive API NOT authorized:', results.checks.drive.error);
+    results.allAuthorized = false;
+  }
+  
+  // Check Docs API
+  console.log('\n2. Checking Docs API authorization...');
+  results.checks.docs = checkDocsAuthorization();
+  if (results.checks.docs.authorized) {
+    console.log('   ✅ Docs API authorized');
+  } else {
+    console.error('   ❌ Docs API NOT authorized:', results.checks.docs.error);
+    results.allAuthorized = false;
+  }
+  
+  // Check built-in services (for comparison)
+  console.log('\n3. Checking built-in services...');
+  try {
+    DriveApp.getStorageLimit();
+    results.checks.driveApp = { authorized: true, service: 'DriveApp (built-in)' };
+    console.log('   ✅ DriveApp authorized');
+  } catch (e) {
+    results.checks.driveApp = { authorized: false, error: e.message };
+    console.error('   ❌ DriveApp NOT authorized:', e.message);
+    results.allAuthorized = false;
+  }
+  
+  try {
+    DocumentApp.create('test');
+    results.checks.documentApp = { authorized: true, service: 'DocumentApp (built-in)' };
+    console.log('   ✅ DocumentApp authorized');
+  } catch (e) {
+    results.checks.documentApp = { authorized: false, error: e.message };
+    console.error('   ❌ DocumentApp NOT authorized:', e.message);
+    results.allAuthorized = false;
+  }
+  
+  console.log('\n' + '='.repeat(50));
+  if (results.allAuthorized) {
+    console.log('✅ ALL AUTHORIZATIONS VERIFIED');
+  } else {
+    console.error('❌ SOME AUTHORIZATIONS MISSING');
+    console.log('Run debug_triggerAuth() to fix authorization issues');
+  }
+  console.log('='.repeat(50));
+  
+  return results;
+}
+
+/**
+ * Verifies trigger authorization status
+ * Lists all triggers and checks if they have proper authorization context
+ * @returns {Object} Report of all triggers and their authorization status
+ */
+function verifyTriggerAuthorization() {
+  console.log('🔍 Verifying Trigger Authorization');
+  console.log('='.repeat(50));
+  
+  const triggers = ScriptApp.getProjectTriggers();
+  const report = {
+    timestamp: new Date().toISOString(),
+    totalTriggers: triggers.length,
+    triggers: [],
+    warnings: []
+  };
+  
+  if (triggers.length === 0) {
+    console.log('No triggers found in this project.');
+    report.message = 'No triggers configured';
+    return report;
+  }
+  
+  console.log(`Found ${triggers.length} trigger(s):\n`);
+  
+  triggers.forEach((trigger, index) => {
+    const triggerInfo = {
+      index: index + 1,
+      type: trigger.getEventType().toString(),
+      handlerFunction: trigger.getHandlerFunction(),
+      source: trigger.getTriggerSource() ? trigger.getTriggerSource().toString() : 'UNKNOWN'
+    };
+    
+    // Check trigger type
+    if (trigger.getEventType() === ScriptApp.EventType.CLOCK) {
+      triggerInfo.schedule = 'Time-driven trigger';
+      triggerInfo.warning = 'Time-driven triggers execute as the user who created them. Ensure that user has authorized all required scopes.';
+      report.warnings.push(`Trigger "${triggerInfo.handlerFunction}" is time-driven - verify creator has authorized scopes`);
+    } else if (trigger.getEventType() === ScriptApp.EventType.ON_EDIT) {
+      triggerInfo.schedule = 'On edit trigger';
+    } else if (trigger.getEventType() === ScriptApp.EventType.ON_FORM_SUBMIT) {
+      triggerInfo.schedule = 'On form submit trigger';
+    } else if (trigger.getEventType() === ScriptApp.EventType.ON_OPEN) {
+      triggerInfo.schedule = 'On open trigger';
+    }
+    
+    // Check if handler function exists
+    try {
+      const handler = eval(triggerInfo.handlerFunction);
+      if (typeof handler === 'function') {
+        triggerInfo.handlerExists = true;
+      } else {
+        triggerInfo.handlerExists = false;
+        triggerInfo.error = 'Handler function not found';
+        report.warnings.push(`Trigger "${triggerInfo.handlerFunction}" handler function not found`);
+      }
+    } catch (e) {
+      triggerInfo.handlerExists = false;
+      triggerInfo.error = 'Cannot verify handler function';
+    }
+    
+    report.triggers.push(triggerInfo);
+    
+    console.log(`${index + 1}. ${triggerInfo.type}`);
+    console.log(`   Handler: ${triggerInfo.handlerFunction}`);
+    console.log(`   Source: ${triggerInfo.source}`);
+    if (triggerInfo.schedule) {
+      console.log(`   Schedule: ${triggerInfo.schedule}`);
+    }
+    if (triggerInfo.warning) {
+      console.log(`   ⚠️  ${triggerInfo.warning}`);
+    }
+    console.log('');
+  });
+  
+  console.log('='.repeat(50));
+  console.log('Summary:');
+  console.log(`Total triggers: ${report.totalTriggers}`);
+  if (report.warnings.length > 0) {
+    console.log(`Warnings: ${report.warnings.length}`);
+    report.warnings.forEach(w => console.log(`  - ${w}`));
+  }
+  console.log('');
+  console.log('⚠️  IMPORTANT: Time-driven triggers execute as the user who created them.');
+  console.log('If triggers fail with authorization errors, the creator may need to:');
+  console.log('1. Run debug_triggerAuth() to authorize all scopes');
+  console.log('2. Delete and recreate the triggers');
+  console.log('='.repeat(50));
+  
+  return report;
+}
+
+/**
+ * Checks if triggers have required scopes
+ * This is a helper function that combines trigger verification with authorization checks
+ * @returns {Object} Combined report of triggers and their authorization status
+ */
+function checkTriggerScopes() {
+  const triggerReport = verifyTriggerAuthorization();
+  const authReport = checkAllAuthorizations();
+  
+  return {
+    timestamp: new Date().toISOString(),
+    triggers: triggerReport,
+    authorization: authReport,
+    recommendation: authReport.allAuthorized 
+      ? 'All authorizations verified. Triggers should work correctly.'
+      : 'Some authorizations are missing. Run debug_triggerAuth() and recreate triggers if needed.'
+  };
+}
+
+// ============================================================================
+// PHASE 3: ADVANCED SERVICES WRAPPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Copies a file using Drive API v3
+ * @param {string} fileId - ID of the file to copy
+ * @param {string} name - Name for the copied file
+ * @param {string} folderId - ID of the destination folder
+ * @returns {Object} Result with success flag and new file ID
+ */
+function driveCopyFile(fileId, name, folderId) {
+  try {
+    const copyMetadata = {
+      name: name,
+      parents: [folderId]
+    };
+    
+    // Added supportsAllDrives for Shared Drive support
+    const copiedFile = Drive.Files.copy(copyMetadata, fileId, {
+      supportsAllDrives: true
+    });
+    
+    return {
+      success: true,
+      fileId: copiedFile.id,
+      name: copiedFile.name
+    };
+  } catch (e) {
+    const classification = classifyError(e);
+    throw {
+      success: false,
+      error: classification.type,
+      message: classification.userMessage,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion
+    };
+  }
+}
+
+/**
+ * Gets file metadata using Drive API v3
+ * @param {string} fileId - ID of the file
+ * @param {Array<string>} fields - Optional fields to retrieve (default: basic metadata)
+ * @returns {Object} File metadata
+ */
+function driveGetFile(fileId, fields = ['id', 'name', 'mimeType', 'parents']) {
+  try {
+    // Added supportsAllDrives for Shared Drive support
+    const file = Drive.Files.get(fileId, {
+      fields: fields.join(','),
+      supportsAllDrives: true
+    });
+    return {
+      success: true,
+      file: file
+    };
+  } catch (e) {
+    const classification = classifyError(e);
+    throw {
+      success: false,
+      error: classification.type,
+      message: classification.userMessage,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion
+    };
+  }
+}
+
+/**
+ * Gets folder metadata using Drive API v3
+ * @param {string} folderId - ID of the folder
+ * @returns {Object} Folder metadata
+ */
+function driveGetFolder(folderId) {
+  try {
+    // Added supportsAllDrives for Shared Drive support
+    const folder = Drive.Files.get(folderId, {
+      fields: 'id,name,mimeType,parents',
+      supportsAllDrives: true
+    });
+    
+    // Verify it's actually a folder
+    if (folder.mimeType !== 'application/vnd.google-apps.folder') {
+      throw {
+        success: false,
+        error: 'NOT_FOUND',
+        message: 'The specified ID is not a folder',
+        details: `Expected folder, got: ${folder.mimeType}`
+      };
+    }
+    
+    return {
+      success: true,
+      folder: folder,
+      id: folder.id,
+      name: folder.name
+    };
+  } catch (e) {
+    // If it's already our structured error, re-throw
+    if (e.success !== undefined) {
+      throw e;
+    }
+    
+    const classification = classifyError(e);
+    throw {
+      success: false,
+      error: classification.type,
+      message: classification.userMessage,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion
+    };
+  }
+}
+
+/**
+ * Gets document content using Docs API v1
+ * @param {string} documentId - ID of the document
+ * @returns {Object} Document content and metadata
+ */
+function docsGetDocument(documentId) {
+  try {
+    const document = Docs.Documents.get(documentId);
+    return {
+      success: true,
+      document: document,
+      documentId: document.documentId,
+      title: document.title
+    };
+  } catch (e) {
+    const classification = classifyError(e);
+    throw {
+      success: false,
+      error: classification.type,
+      message: classification.userMessage,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion
+    };
+  }
+}
+
+/**
+ * Performs batch update operations on a document using Docs API v1
+ * @param {string} documentId - ID of the document
+ * @param {Array<Object>} requests - Array of update requests
+ * @returns {Object} Result with success flag and revision ID
+ */
+function docsBatchUpdate(documentId, requests) {
+  try {
+    const response = Docs.Documents.batchUpdate({
+      requests: requests
+    }, documentId);
+    
+    return {
+      success: true,
+      revisionId: response.revisionId,
+      documentId: response.documentId
+    };
+  } catch (e) {
+    const classification = classifyError(e);
+    throw {
+      success: false,
+      error: classification.type,
+      message: classification.userMessage,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion
+    };
+  }
+}
+
+/**
+ * Replaces all occurrences of text in a document using Docs API v1
+ * This is a helper function that creates the batch update request for text replacement
+ * @param {string} documentId - ID of the document
+ * @param {string} findText - Text to find (supports regex patterns)
+ * @param {string} replaceText - Text to replace with
+ * @returns {Object} Result with success flag
+ */
+function docsReplaceText(documentId, findText, replaceText) {
+  try {
+    const request = {
+      replaceAllText: {
+        containsText: {
+          text: findText,
+          matchCase: false
+        },
+        replaceText: replaceText
+      }
+    };
+    
+    return docsBatchUpdate(documentId, [request]);
+  } catch (e) {
+    // Re-throw structured errors as-is
+    if (e.success !== undefined) {
+      throw e;
+    }
+    
+    const classification = classifyError(e);
+    throw {
+      success: false,
+      error: classification.type,
+      message: classification.userMessage,
+      details: e.message || e.toString(),
+      suggestion: classification.suggestion
+    };
+  }
 }
 
 /**

@@ -2693,11 +2693,20 @@
             }
 
             // Show entry date/time (read-only audit field)
-            if (donation.entry_date) {
-                document.getElementById('entry-date-group').classList.remove('d-none');
-                document.getElementById('entry-date').value = formatDateTimeUS(donation.entry_date);
+            console.log('Opening Edit Modal for txn:', txn_id);
+            console.log('Entry Date from data:', donation.entry_date);
+            console.log('Logged By from data:', donation.logged_by);
+
+            const entryGroup = document.getElementById('entry-date-group');
+            const entryInput = document.getElementById('entry-date');
+            
+            if (donation.entry_date && donation.entry_date !== '') {
+                entryGroup.classList.remove('d-none');
+                entryInput.value = formatDateTimeUS(donation.entry_date) + (donation.logged_by ? ' by ' + donation.logged_by : '');
+                console.log('Entry date visible. Value set to:', entryInput.value);
             } else {
-                document.getElementById('entry-date-group').classList.add('d-none');
+                entryGroup.classList.add('d-none');
+                console.log('Entry date hidden because it is empty.');
             }
 
             // Show members preview
@@ -2772,10 +2781,14 @@
             // Update Local State
             if (txnId) { // Update
                 const idx = STATE.donations.findIndex(d => d.txn_id === txnId);
-                if (idx !== -1) STATE.donations[idx] = payload;
+                if (idx !== -1) {
+                    // Merge payload into existing donation to preserve entry_date and logged_by
+                    STATE.donations[idx] = { ...STATE.donations[idx], ...payload };
+                }
             } else { // Create
                 payload.txn_id = res.txn_id;
                 payload.entry_date = res.entry_date;
+                payload.logged_by = res.logged_by;
                 STATE.donations.push(payload);
             }
 

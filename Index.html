@@ -68,8 +68,12 @@
     <div id="page-content-wrapper" class="container-fluid p-4 bg-light w-100">
 
       <!-- Main Header -->
-      <div class="mb-4 pb-3 border-bottom">
+      <div class="mb-4 pb-3 border-bottom d-flex justify-content-between align-items-center">
         <h1 class="display-5 fw-bold text-primary mb-0">Southwest Corridor Park Conservancy</h1>
+        <div class="text-end">
+          <div class="text-muted small fw-bold">Logged in as:</div>
+          <div class="text-primary small"><?= versionInfo.userEmail ?></div>
+        </div>
       </div>
 
       <!-- Back Navigation -->
